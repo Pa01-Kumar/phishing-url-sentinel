@@ -38,3 +38,11 @@ async def scan_url(request: URLRequest):
 @app.get("/history")
 def get_scan_history():
     return database.get_history()
+@app.delete("/history")
+@app.delete("/history/{scan_id}")
+def delete_single_scan(scan_id: int):
+    database.delete_scan(scan_id)
+    return {"message": f"Scan {scan_id} deleted successfully"}
+def clear_scan_history():
+    database.clear_history()
+    return {"message": "History cleared successfully"}

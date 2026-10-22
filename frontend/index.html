@@ -8,7 +8,7 @@
 </head>
 <body class="bg-gray-900 text-white font-sans min-h-screen flex flex-col items-center pt-20">
 
-    <div class="w-full max-w-2xl px-4">
+    <div class="w-full max-w-2xl px-4 pb-20">
         <!-- Header -->
         <div class="text-center mb-10">
             <h1 class="text-4xl font-bold text-blue-400 mb-2">🛡️ Phishing Sentinel</h1>
@@ -31,10 +31,17 @@
         </div>
 
         <!-- Results Area -->
-        <div id="resultContainer" class="hidden bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-xl">
+        <div id="resultContainer" class="hidden bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-xl mb-8">
+            
+            <!-- Header & Download Button -->
             <div class="flex items-center justify-between mb-4">
                 <h2 class="text-2xl font-bold">Scan Result</h2>
-                <span id="verdictBadge" class="px-4 py-1 rounded-full font-bold text-sm"></span>
+                <div class="flex items-center gap-3">
+                    <button onclick="downloadReport()" class="bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold py-2 px-3 rounded-lg transition-colors flex items-center gap-1">
+                        ⬇️ Download JSON
+                    </button>
+                    <span id="verdictBadge" class="px-4 py-1 rounded-full font-bold text-sm"></span>
+                </div>
             </div>
             
             <div class="mb-6">
@@ -42,7 +49,7 @@
                 <p id="resultUrl" class="font-mono text-sm break-all bg-gray-900 p-2 rounded"></p>
             </div>
 
-            <!-- NEW: Website Screenshot -->
+            <!-- Website Screenshot -->
             <div class="mb-6 hidden" id="screenshotContainer">
                 <p class="text-gray-400 text-sm mb-2">Live Website Preview:</p>
                 <div class="w-full h-64 bg-gray-900 rounded-lg overflow-hidden border border-gray-700 flex items-center justify-center relative">
@@ -78,44 +85,52 @@
         </div>
             
         <!-- Scan History -->
-        <div class="mt-8 bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-xl">
-            <h2 class="text-xl font-bold mb-4">Recent Scans</h2>
+        <div class="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-xl">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold">Recent Scans</h2>
+                <button onclick="clearHistory()" class="text-gray-400 hover:text-red-500 transition-colors text-sm flex items-center gap-1">
+                    🗑️ Clear All
+                </button>
+            </div>
             <ul id="historyList" class="space-y-3 text-sm">
             </ul>
         </div>   
     </div>
 
     <script>
-        async function loadHistory() {
+        // Global variable to hold the current scan result for downloading
+        let currentScanData = null;
+
+        // 1. Validate and format the URL before sending to backend
+        function validateAndFormatURL(input) {
+            let urlToScan = input.trim();
+            if (!urlToScan) return null;
+            
+            // Auto-add https:// if the user forgot it
+            if (!/^https?:\/\//i.test(urlToScan)) {
+                urlToScan = 'https://' + urlToScan;
+            }
+            
             try {
-                const response = await fetch('http://127.0.0.1:8000/history');
-                const history = await response.json();
-                const historyList = document.getElementById('historyList');
-                historyList.innerHTML = ''; 
-
-                history.forEach(item => {
-                    let colorClass = "text-green-400";
-                    if (item.verdict === 'malicious') colorClass = "text-red-400";
-                    if (item.verdict === 'suspicious') colorClass = "text-yellow-400";
-
-                    const li = document.createElement('li');
-                    li.className = "flex justify-between border-b border-gray-700 pb-2";
-                    li.innerHTML = `
-                        <span class="truncate w-1/2">${item.url}</span>
-                        <span class="${colorClass} font-bold uppercase">${item.verdict}</span>
-                        <span class="text-gray-500 text-xs">${item.timestamp}</span>
-                    `;
-                    historyList.appendChild(li);
-                });
-            } catch (error) {
-                console.error("Failed to load history", error);
+                new URL(urlToScan); 
+                // Ensure there is at least one dot (blocks input like "hello")
+                if (!urlToScan.includes('.')) throw new Error("Invalid format");
+                return urlToScan;
+            } catch (e) {
+                return null;
             }
         }
 
         async function scanURL() {
-            const urlInput = document.getElementById('urlInput').value;
-            if (!urlInput) return alert('Please enter a URL');
+            const rawInput = document.getElementById('urlInput').value;
+            
+            // Apply validation
+            const urlInput = validateAndFormatURL(rawInput);
+            if (!urlInput) {
+                return alert('Please enter a valid URL (e.g., example.com or https://example.com)');
+            }
 
+            // UI Updates
             document.getElementById('scanBtn').disabled = true;
             document.getElementById('scanBtn').innerText = 'Scanning...';
             document.getElementById('loading').classList.remove('hidden');
@@ -141,6 +156,9 @@
         }
 
         function displayResult(data) {
+            // Save data globally for the download button
+            currentScanData = data; 
+
             document.getElementById('resultContainer').classList.remove('hidden');
             document.getElementById('resultUrl').innerText = data.url;
             
@@ -177,7 +195,6 @@
                 screenshotContainer.classList.remove('hidden');
                 websiteImage.classList.add('hidden');
                 imageLoading.style.display = 'block';
-                // Add Date.now() to prevent browser caching of the same image
                 websiteImage.src = `https://image.thum.io/get/width/800/crop/600/${finalUrl}?t=${Date.now()}`;
             } else {
                 screenshotContainer.classList.add('hidden');
@@ -199,25 +216,25 @@
                 redirectContainer.classList.add('hidden');
             }
 
-            // 5. Populate Details & VirusTotal (FIXED ORDER)
+            // 5. Populate Details & VirusTotal
             const detailsList = document.getElementById('detailsList');
-            detailsList.innerHTML = ''; // Clear list FIRST
+            detailsList.innerHTML = ''; 
             
-            // Add VirusTotal Stats
+            // VirusTotal
             if (data.details.virustotal_stats) {
                 const vt = data.details.virustotal_stats;
                 const vtLi = document.createElement('li');
-                vtLi.className = "border-b border-gray-700 pb-2 mb-2";
+                vtLi.className = "border-b border-gray-700 pb-2 mb-2 font-bold";
                 if (vt.error) {
                     vtLi.innerHTML = `<span class="text-red-400">VirusTotal:</span> <span class="text-gray-400">${vt.error}</span>`;
                 } else {
                     const color = vt.malicious > 0 ? "text-red-400" : "text-green-400";
-                    vtLi.innerHTML = `<span class="text-blue-400">VirusTotal:</span> <span class="${color} font-bold">${vt.malicious} / ${vt.total_engines}</span> security vendors flagged this URL.`;
+                    vtLi.innerHTML = `<span class="text-blue-400">VirusTotal:</span> <span class="${color}">${vt.malicious} / ${vt.total_engines}</span> security vendors flagged this URL.`;
                 }
                 detailsList.appendChild(vtLi);
             }
             
-            // Add the rest of the heuristic checks
+            // Heuristics
             const checks = data.details.checks;
             for (const [key, value] of Object.entries(checks)) {
                 const li = document.createElement('li');
@@ -225,8 +242,80 @@
                 detailsList.appendChild(li);
             }
             
-            // Refresh the history list immediately after a scan finishes
             loadHistory(); 
+        }
+
+        // 2. Download Report Function
+        function downloadReport() {
+            if (!currentScanData) return;
+            
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(currentScanData, null, 2));
+            const downloadAnchorNode = document.createElement('a');
+            downloadAnchorNode.setAttribute("href", dataStr);
+            downloadAnchorNode.setAttribute("download", "phishing_report_" + Date.now() + ".json");
+            document.body.appendChild(downloadAnchorNode); 
+            downloadAnchorNode.click();
+            downloadAnchorNode.remove();
+        }
+
+        // 3. Load History Function (UPDATED with individual delete buttons)
+        async function loadHistory() {
+            try {
+                const response = await fetch('http://127.0.0.1:8000/history');
+                const history = await response.json();
+                const historyList = document.getElementById('historyList');
+                historyList.innerHTML = ''; 
+
+                history.forEach(item => {
+                    let colorClass = "text-green-400";
+                    if (item.verdict === 'malicious') colorClass = "text-red-400";
+                    if (item.verdict === 'suspicious') colorClass = "text-yellow-400";
+
+                    const li = document.createElement('li');
+                    li.className = "flex justify-between items-center border-b border-gray-700 pb-2";
+                    
+                    // Added the 'X' delete button with the specific ID
+                    li.innerHTML = `
+                        <span class="truncate w-1/2" title="${item.url}">${item.url}</span>
+                        <span class="${colorClass} font-bold uppercase text-xs">${item.verdict}</span>
+                        <span class="text-gray-500 text-xs w-24 text-right hidden sm:block">${item.timestamp}</span>
+                        <button onclick="deleteSingleScan(${item.id})" class="text-gray-500 hover:text-red-500 transition-colors ml-2 font-bold text-base" title="Delete Scan">
+                            ✖
+                        </button>
+                    `;
+                    historyList.appendChild(li);
+                });
+            } catch (error) {
+                console.error("Failed to load history", error);
+            }
+        }
+
+        // 4. Clear Entire History Function
+        async function clearHistory() {
+            if (!confirm("Are you sure you want to delete all scan history?")) return;
+            
+            try {
+                const response = await fetch('http://127.0.0.1:8000/history', { method: 'DELETE' });
+                if (response.ok) {
+                    loadHistory(); 
+                }
+            } catch (error) {
+                console.error("Failed to clear history", error);
+            }
+        }
+
+        // 5. Delete Single Scan Function
+        async function deleteSingleScan(scanId) {
+            try {
+                const response = await fetch(`http://127.0.0.1:8000/history/${scanId}`, { 
+                    method: 'DELETE' 
+                });
+                if (response.ok) {
+                    loadHistory(); // Instantly refresh the list
+                }
+            } catch (error) {
+                console.error("Failed to delete scan", error);
+            }
         }
 
         // Run loadHistory once when the page is first opened
