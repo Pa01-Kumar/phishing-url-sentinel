@@ -61,9 +61,43 @@
                 </ul>
             </div>
         </div>
+            <!-- Scan History -->
+        <div class="mt-8 bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-xl">
+            <h2 class="text-xl font-bold mb-4">Recent Scans</h2>
+            <ul id="historyList" class="space-y-3 text-sm">
+                <!-- History items will be injected here -->
+            </ul>
+        </div>   
     </div>
 
     <script>
+                // Add this function at the bottom of your script
+        async function loadHistory() {
+            try {
+                const response = await fetch('http://127.0.0.1:8000/history');
+                const history = await response.json();
+                const historyList = document.getElementById('historyList');
+                historyList.innerHTML = ''; // Clear old list
+
+                history.forEach(item => {
+                    let colorClass = "text-green-400";
+                    if (item.verdict === 'malicious') colorClass = "text-red-400";
+                    if (item.verdict === 'suspicious') colorClass = "text-yellow-400";
+
+                    const li = document.createElement('li');
+                    li.className = "flex justify-between border-b border-gray-700 pb-2";
+                    li.innerHTML = `
+                        <span class="truncate w-1/2">${item.url}</span>
+                        <span class="${colorClass} font-bold uppercase">${item.verdict}</span>
+                        <span class="text-gray-500 text-xs">${item.timestamp}</span>
+                    `;
+                    historyList.appendChild(li);
+                });
+            } catch (error) {
+                console.error("Failed to load history", error);
+            }
+        }
+
         async function scanURL() {
             const urlInput = document.getElementById('urlInput').value;
             if (!urlInput) return alert('Please enter a URL');
@@ -130,7 +164,9 @@
                 li.innerHTML = `<span class="text-blue-400">${key}:</span> <span class="text-gray-300">${JSON.stringify(value)}</span>`;
                 detailsList.appendChild(li);
             }
+        loadHistory(); 
         }
+    window.onload = loadHistory; 
     </script>
 </body>
 </html>

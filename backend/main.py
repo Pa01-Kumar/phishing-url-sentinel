@@ -1,16 +1,18 @@
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
 from pydantic import BaseModel
-from detector import analyze_url # Import our new function!
+from detector import analyze_url
+from fastapi.middleware.cors import CORSMiddleware
+import database  # <-- NEW: Import our database file
 
 app = FastAPI(
     title="Phishing URL Sentinel",
     description="An API to detect phishing URLs using ML models and heuristics.",
     version="0.1.0"
 )
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Allows any frontend to talk to this API
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -25,6 +27,14 @@ def read_root():
 
 @app.post("/scan")
 async def scan_url(request: URLRequest):
-    # Call the detector logic
     result = analyze_url(request.url)
+    
+    # NEW: Save the result to the database
+    database.save_scan(result["url"], result["risk_score"], result["verdict"])
+    
     return result
+
+# NEW: Endpoint to get recent scans
+@app.get("/history")
+def get_scan_history():
+    return database.get_history()
