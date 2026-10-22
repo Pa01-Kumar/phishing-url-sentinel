@@ -25,12 +25,12 @@
             </button>
         </div>
 
-        <!-- Loading Spinner (Hidden by default) -->
+        <!-- Loading Spinner -->
         <div id="loading" class="hidden text-center text-blue-400 mb-8 animate-pulse">
-            <p>Analyzing URL via ML models and WHOIS data... (This may take a few seconds)</p>
+            <p>Analyzing URL via ML models, VirusTotal, and WHOIS data... (This may take a few seconds)</p>
         </div>
 
-        <!-- Results Area (Hidden by default) -->
+        <!-- Results Area -->
         <div id="resultContainer" class="hidden bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-xl">
             <div class="flex items-center justify-between mb-4">
                 <h2 class="text-2xl font-bold">Scan Result</h2>
@@ -40,6 +40,15 @@
             <div class="mb-6">
                 <p class="text-gray-400 text-sm mb-1">Analyzed URL:</p>
                 <p id="resultUrl" class="font-mono text-sm break-all bg-gray-900 p-2 rounded"></p>
+            </div>
+
+            <!-- NEW: Website Screenshot -->
+            <div class="mb-6 hidden" id="screenshotContainer">
+                <p class="text-gray-400 text-sm mb-2">Live Website Preview:</p>
+                <div class="w-full h-64 bg-gray-900 rounded-lg overflow-hidden border border-gray-700 flex items-center justify-center relative">
+                    <div id="imageLoading" class="absolute text-gray-500 text-sm animate-pulse">Generating Preview...</div>
+                    <img id="websiteImage" src="" alt="Website Screenshot" class="w-full h-full object-cover object-top hidden" onload="document.getElementById('imageLoading').style.display='none'; this.classList.remove('hidden');">
+                </div>
             </div>
 
             <!-- Risk Score Bar -->
@@ -53,39 +62,36 @@
                 </div>
             </div>
 
-                        <!-- Redirect Chain (Hidden by default) -->
+            <!-- Redirect Chain -->
             <div id="redirectContainer" class="mb-6 hidden">
                 <p class="text-gray-400 text-sm mb-2">Redirect Chain:</p>
                 <div id="redirectList" class="flex flex-col gap-2 bg-gray-900 p-3 rounded-lg text-xs font-mono break-all text-yellow-300">
-                    <!-- Redirects injected here -->
                 </div>
             </div>
 
-            <!-- Details / Checks -->
+            <!-- Detection Details & VirusTotal -->
             <div>
                 <p class="text-gray-400 text-sm mb-2">Detection Details:</p>
                 <ul id="detailsList" class="space-y-2 text-sm bg-gray-900 p-4 rounded-lg font-mono">
-                    <!-- Details injected here -->
                 </ul>
             </div>
         </div>
-            <!-- Scan History -->
+            
+        <!-- Scan History -->
         <div class="mt-8 bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-xl">
             <h2 class="text-xl font-bold mb-4">Recent Scans</h2>
             <ul id="historyList" class="space-y-3 text-sm">
-                <!-- History items will be injected here -->
             </ul>
         </div>   
     </div>
 
     <script>
-                // Add this function at the bottom of your script
         async function loadHistory() {
             try {
                 const response = await fetch('http://127.0.0.1:8000/history');
                 const history = await response.json();
                 const historyList = document.getElementById('historyList');
-                historyList.innerHTML = ''; // Clear old list
+                historyList.innerHTML = ''; 
 
                 history.forEach(item => {
                     let colorClass = "text-green-400";
@@ -110,7 +116,6 @@
             const urlInput = document.getElementById('urlInput').value;
             if (!urlInput) return alert('Please enter a URL');
 
-            // UI Updates
             document.getElementById('scanBtn').disabled = true;
             document.getElementById('scanBtn').innerText = 'Scanning...';
             document.getElementById('loading').classList.remove('hidden');
@@ -139,14 +144,13 @@
             document.getElementById('resultContainer').classList.remove('hidden');
             document.getElementById('resultUrl').innerText = data.url;
             
-            // Update Risk Score
+            // 1. Risk Score
             const score = data.risk_score;
             document.getElementById('riskScoreText').innerText = (score * 100).toFixed(1) + '%';
-            
             const riskBar = document.getElementById('riskBar');
             riskBar.style.width = (score * 100) + '%';
 
-            // Update Verdict Badge
+            // 2. Verdict Badge
             const badge = document.getElementById('verdictBadge');
             badge.innerText = data.verdict.toUpperCase();
             badge.className = "px-4 py-1 rounded-full font-bold text-sm ";
@@ -162,7 +166,24 @@
                 badge.className += "bg-green-500 text-white";
             }
 
-            // Populate Redirect Chain
+            // 3. Website Screenshot
+            const screenshotContainer = document.getElementById('screenshotContainer');
+            const websiteImage = document.getElementById('websiteImage');
+            const imageLoading = document.getElementById('imageLoading');
+            
+            const finalUrl = data.details.redirect_chain[data.details.redirect_chain.length - 1];
+            
+            if (finalUrl && finalUrl.startsWith('http')) {
+                screenshotContainer.classList.remove('hidden');
+                websiteImage.classList.add('hidden');
+                imageLoading.style.display = 'block';
+                // Add Date.now() to prevent browser caching of the same image
+                websiteImage.src = `https://image.thum.io/get/width/800/crop/600/${finalUrl}?t=${Date.now()}`;
+            } else {
+                screenshotContainer.classList.add('hidden');
+            }
+
+            // 4. Redirect Chain
             const redirectContainer = document.getElementById('redirectContainer');
             const redirectList = document.getElementById('redirectList');
             redirectList.innerHTML = '';
@@ -178,19 +199,38 @@
                 redirectContainer.classList.add('hidden');
             }
 
-            // Populate Details
+            // 5. Populate Details & VirusTotal (FIXED ORDER)
             const detailsList = document.getElementById('detailsList');
-            detailsList.innerHTML = '';
+            detailsList.innerHTML = ''; // Clear list FIRST
             
+            // Add VirusTotal Stats
+            if (data.details.virustotal_stats) {
+                const vt = data.details.virustotal_stats;
+                const vtLi = document.createElement('li');
+                vtLi.className = "border-b border-gray-700 pb-2 mb-2";
+                if (vt.error) {
+                    vtLi.innerHTML = `<span class="text-red-400">VirusTotal:</span> <span class="text-gray-400">${vt.error}</span>`;
+                } else {
+                    const color = vt.malicious > 0 ? "text-red-400" : "text-green-400";
+                    vtLi.innerHTML = `<span class="text-blue-400">VirusTotal:</span> <span class="${color} font-bold">${vt.malicious} / ${vt.total_engines}</span> security vendors flagged this URL.`;
+                }
+                detailsList.appendChild(vtLi);
+            }
+            
+            // Add the rest of the heuristic checks
             const checks = data.details.checks;
             for (const [key, value] of Object.entries(checks)) {
                 const li = document.createElement('li');
                 li.innerHTML = `<span class="text-blue-400">${key}:</span> <span class="text-gray-300">${JSON.stringify(value)}</span>`;
                 detailsList.appendChild(li);
             }
-        loadHistory(); 
+            
+            // Refresh the history list immediately after a scan finishes
+            loadHistory(); 
         }
-    window.onload = loadHistory; 
+
+        // Run loadHistory once when the page is first opened
+        window.onload = loadHistory;
     </script>
 </body>
 </html>
