@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
+from detector import analyze_url # Import our new function!
 
 app = FastAPI(
     title="Phishing URL Sentinel",
@@ -16,9 +17,6 @@ def read_root():
 
 @app.post("/scan")
 async def scan_url(request: URLRequest):
-    return {
-        "url": request.url,
-        "verdict": "pending",
-        "risk_score": 0.0,
-        "details": "Model integration coming next!"
-    }
+    # Call the detector logic
+    result = analyze_url(request.url)
+    return result
