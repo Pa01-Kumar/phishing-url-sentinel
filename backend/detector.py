@@ -4,6 +4,8 @@ import socket
 import tldextract
 import requests
 import ipaddress
+import math
+from collections import Counter
 from datetime import datetime
 from transformers import pipeline
 from urllib.parse import urlparse
@@ -55,6 +57,20 @@ def check_virustotal(url: str):
             "vt_penalty": min(malicious_count * 0.15, 0.6) 
         }
     return {"malicious": 0, "suspicious": 0, "total_engines": 70, "vt_penalty": 0.0, "note": "URL not in VT database yet."}
+
+def calculate_entropy(text: str) -> float:
+    """Calculates Shannon entropy to detect random/DGA domains."""
+    if not text:
+        return 0.0
+    entropy = 0.0
+    length = len(text)
+    # Count the frequency of each character
+    counter = Counter(text)
+    # Apply the Shannon entropy formula
+    for count in counter.values():
+        p_x = count / length
+        entropy += - p_x * math.log2(p_x)
+    return entropy
 
 def analyze_url(url: str):
     final_url, redirect_chain, redirect_penalty = trace_redirects(url)
@@ -162,6 +178,18 @@ def analyze_url(url: str):
                         
             if typosquatting_target:
                 heuristics['typosquatting_warning'] = f"Domain heavily resembles '{typosquatting_target}'"
+
+        # --- NEW: Entropy Check (DGA Detection) ---
+        if not is_ip:
+            # Calculate entropy of just the domain name (e.g., "xj3k9f2a")
+            domain_entropy = calculate_entropy(domain_name_only)
+            heuristics['domain_entropy'] = round(domain_entropy, 2)
+            
+            # Normal human words usually have entropy < 3.0. 
+            # DGA domains (random strings) usually have entropy > 3.2
+            if domain_entropy > 3.2 and len(domain_name_only) > 6:
+                heuristics['dga_entropy_warning'] = "Domain appears randomly generated (DGA)"
+                penalty += 0.4 # Heavy penalty for random strings
 
         # 6. DNS Resolution
         try:
