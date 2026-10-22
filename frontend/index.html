@@ -53,6 +53,14 @@
                 </div>
             </div>
 
+                        <!-- Redirect Chain (Hidden by default) -->
+            <div id="redirectContainer" class="mb-6 hidden">
+                <p class="text-gray-400 text-sm mb-2">Redirect Chain:</p>
+                <div id="redirectList" class="flex flex-col gap-2 bg-gray-900 p-3 rounded-lg text-xs font-mono break-all text-yellow-300">
+                    <!-- Redirects injected here -->
+                </div>
+            </div>
+
             <!-- Details / Checks -->
             <div>
                 <p class="text-gray-400 text-sm mb-2">Detection Details:</p>
@@ -152,6 +160,22 @@
             } else {
                 riskBar.className = "h-4 rounded-full transition-all duration-1000 bg-green-500";
                 badge.className += "bg-green-500 text-white";
+            }
+
+            // Populate Redirect Chain
+            const redirectContainer = document.getElementById('redirectContainer');
+            const redirectList = document.getElementById('redirectList');
+            redirectList.innerHTML = '';
+            
+            if (data.details.redirect_chain && data.details.redirect_chain.length > 1) {
+                redirectContainer.classList.remove('hidden');
+                data.details.redirect_chain.forEach((link, index) => {
+                    const p = document.createElement('div');
+                    p.innerText = (index > 0 ? "⬇️ " : "📍 ") + link;
+                    redirectList.appendChild(p);
+                });
+            } else {
+                redirectContainer.classList.add('hidden');
             }
 
             // Populate Details
