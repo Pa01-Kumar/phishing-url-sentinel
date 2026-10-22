@@ -1,0 +1,6 @@
+[submodule "models/urlbert"]
+	path = models/urlbert
+	url = https://github.com/Davidup1/URLBERT.git
+[submodule "models/phishscout"]
+	path = models/phishscout
+	url = https://huggingface.co/saidutta69/PhishScout
