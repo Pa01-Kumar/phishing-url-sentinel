@@ -198,22 +198,31 @@
                 badge.className += "bg-green-500 text-white";
             }
 
-            // 3. Website Screenshot
+            // 3. Website Screenshot (SECURE: Sanitized to prevent PII Leakage)
             const screenshotContainer = document.getElementById('screenshotContainer');
             const websiteImage = document.getElementById('websiteImage');
             const imageLoading = document.getElementById('imageLoading');
             
-            const finalUrl = data.details.redirect_chain[data.details.redirect_chain.length - 1];
+            const rawFinalUrl = data.details.redirect_chain[data.details.redirect_chain.length - 1];
             
-            if (finalUrl && finalUrl.startsWith('http')) {
-                screenshotContainer.classList.remove('hidden');
-                websiteImage.classList.add('hidden');
-                imageLoading.style.display = 'block';
-                websiteImage.src = `https://image.thum.io/get/width/800/crop/600/${finalUrl}?t=${Date.now()}`;
+            if (rawFinalUrl && rawFinalUrl.startsWith('http')) {
+                try {
+                    // Sanitize the URL: Strip query parameters (tokens) and hash fragments
+                    const urlObj = new URL(rawFinalUrl);
+                    const safeUrl = `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}`;
+                    
+                    screenshotContainer.classList.remove('hidden');
+                    websiteImage.classList.add('hidden');
+                    imageLoading.style.display = 'block';
+                    websiteImage.src = `https://image.thum.io/get/width/800/crop/600/${safeUrl}?t=${Date.now()}`;
+                } catch (e) {
+                    // If URL parsing fails (e.g., malformed), hide the screenshot container
+                    screenshotContainer.classList.add('hidden');
+                }
             } else {
                 screenshotContainer.classList.add('hidden');
             }
-
+            
             // 4. Redirect Chain
             const redirectContainer = document.getElementById('redirectContainer');
             const redirectList = document.getElementById('redirectList');
