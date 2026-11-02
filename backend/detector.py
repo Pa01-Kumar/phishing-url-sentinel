@@ -18,20 +18,76 @@ VT_API_KEY = os.getenv("VIRUSTOTAL_API_KEY")
 print("Loading ML Model...")
 classifier = pipeline("text-classification", model="Eason918/malicious-url-detector")
 
+def is_safe_url(url: str) -> bool:
+    """SSRF Protection: Blocks requests to private, loopback, or internal IPs."""
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+            
+        # Get all IP addresses associated with the hostname
+        addr_info = socket.getaddrinfo(hostname, None)
+        
+        for info in addr_info:
+            ip_str = info[4][0]
+            ip = ipaddress.ip_address(ip_str)
+            
+            # Block private, loopback, link-local, multicast, and reserved IPs
+            if (ip.is_private or ip.is_loopback or ip.is_link_local or 
+                ip.is_multicast or ip.is_reserved or ip.is_unspecified):
+                return False
+                
+        return True
+    except Exception:
+        # If it can't resolve, assume unsafe
+        return False
+    
 def trace_redirects(url: str):
     chain = [url]
     penalty = 0.0
     final_url = url
+    
+    # 1. SSRF Check for the initial URL
+    if not is_safe_url(url):
+        chain.append("⛔ Blocked: URL points to a private/internal network (SSRF Protection).")
+        return final_url, chain, 1.0 # Max penalty
+
     try:
-        response = requests.get(url, timeout=5, allow_redirects=True, stream=True)
-        if response.history:
-            for resp in response.history:
-                chain.append(resp.url)
-            final_url = response.url
-            chain.append(final_url)
-            penalty = min(len(response.history) * 0.1, 0.3)
+        current_url = url
+        max_redirects = 5
+        
+        for _ in range(max_redirects):
+            # Disable automatic redirects so we can inspect each hop
+            response = requests.get(current_url, timeout=5, allow_redirects=False, stream=True)
+            
+            # Check if it's a redirect
+            if response.status_code in (301, 302, 303, 307, 308):
+                next_url = response.headers.get('Location')
+                if not next_url:
+                    break
+                    
+                # Handle relative redirects (e.g., "/login")
+                if next_url.startswith('/'):
+                    parsed_current = urlparse(current_url)
+                    next_url = f"{parsed_current.scheme}://{parsed_current.netloc}{next_url}"
+                    
+                # 2. SSRF Check for the redirected URL
+                if not is_safe_url(next_url):
+                    chain.append("⛔ Blocked: Redirect target points to a private/internal network.")
+                    return current_url, chain, 1.0
+                    
+                chain.append(next_url)
+                current_url = next_url
+                penalty += 0.1
+            else:
+                break
+                
+        final_url = current_url
+        penalty = min(penalty, 0.3) # Cap legitimate redirect penalty at 0.3
     except Exception:
         pass
+        
     return final_url, chain, penalty
 
 def check_virustotal(url: str):
