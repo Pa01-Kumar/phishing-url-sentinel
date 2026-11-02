@@ -68,10 +68,9 @@ def trace_redirects(url: str):
                 current_url = next_url
                 penalty += 0.1
             else:
-                # 2. Check for Client-Side JavaScript Redirects (Evasion Tactic 4)
+                # 2. Check for Client-Side JavaScript Redirects
                 try:
                     html_content = response.text[:5000] # Only read first 5KB
-                    # Look for window.location or meta refresh
                     js_match = re.search(r'(?:window\.location|document\.location|location\.href)\s*=\s*[\'"]([^\'"]+)[\'"]', html_content)
                     meta_match = re.search(r'<meta[^>]+http-equiv=[\'"]?refresh[\'"]?[^>]+url=([^\'">]+)', html_content, re.IGNORECASE)
                     
@@ -82,14 +81,14 @@ def trace_redirects(url: str):
                             js_redirect = f"http://{urlparse(current_url).hostname}/{js_redirect.lstrip('/')}"
                         chain.append(f"⚠️ Client-Side JS Redirect -> {js_redirect}")
                         current_url = js_redirect
-                        penalty += 0.25 # Penalty for hidden JS redirects
+                        penalty += 0.1 # Reduced penalty
                         continue
                 except Exception:
                     pass
                 break
                 
         final_url = current_url
-        penalty = min(penalty, 0.4)
+        penalty = min(penalty, 0.3)
     except Exception:
         pass
     return final_url, chain, penalty
@@ -121,11 +120,10 @@ def analyze_url(url: str):
     penalty = 0.0
     
     # --- EVASION FIX 1: URL Percent-Encoding ---
-    # Decodes %6c%6f%67%69%6e to "login"
     decoded_url = unquote(url)
     if decoded_url != url:
         heuristics['percent_encoding_detected'] = True
-        penalty += 0.2 # Hiding characters is suspicious
+        penalty += 0.2
 
     final_url, redirect_chain, redirect_penalty = trace_redirects(decoded_url)
     penalty += redirect_penalty
@@ -144,20 +142,16 @@ def analyze_url(url: str):
         hostname = parsed_url.hostname if parsed_url.hostname else final_url.split('/')[0]
 
         # --- EVASION FIX 2: Punycode / IDN Homoglyphs ---
-        # Detects Cyrillic 'о' masquerading as Latin 'o' (e.g., gооgle.com)
         if hostname.startswith('xn--') or any(ord(c) > 127 for c in hostname):
             heuristics['punycode_homoglyph_attack'] = True
-            penalty += 0.6 # Massive penalty for using foreign characters to spoof
+            penalty += 0.6
 
         # --- EVASION FIX 5: IP Encodings (Hex/Octal) ---
-        # Detects 0x7f000001 or 0177.0.0.1
         is_ip = False
         try:
-            # Check standard IP
             ipaddress.ip_address(hostname)
             is_ip = True
         except ValueError:
-            # Check for Hex or Octal IP (e.g., 0x7f000001)
             try:
                 if hostname.startswith('0x'):
                     ipaddress.ip_address(int(hostname, 16))
@@ -179,64 +173,69 @@ def analyze_url(url: str):
             domain_name_only = extracted.domain
             subdomain = extracted.subdomain
             
+            # --- NEW: TRUSTED SSO DETECTION ---
+            trusted_sso_brands = ['microsoft', 'microsoftonline', 'office', 'live', 'google', 'apple', 'okta', 'auth0', 'duosecurity']
+            is_trusted_sso = any(brand in domain_name_only.lower() for brand in trusted_sso_brands)
+
             # --- EVASION FIX 6: Legit Subdomain Inversion ---
-            # Prevents penalizing "login.corp.com" but still catches "login.paypal.xyz"
             suspicious_keywords = ['login', 'verify', 'secure', 'account', 'update', 'banking', 'phishing', 'admin', 'auth', 'confirm', 'signin', 'support', 'billing', 'wallet', 'crypto', 'recovery']
             
-            # Only check if the keyword is in the ROOT domain or if it's in the subdomain BUT the root domain is not a known safe brand
             found_in_domain = [kw for kw in suspicious_keywords if kw in domain_name_only.lower()]
             found_in_subdomain = [kw for kw in suspicious_keywords if kw in subdomain.lower()]
             
-            if found_in_domain:
-                heuristics['suspicious_keywords_in_root'] = found_in_domain
-                penalty += 0.4
-            
-            # If "login" is in the subdomain, only penalize if the root domain is NOT a known safe brand
-            safe_brands = ['google', 'microsoft', 'apple', 'amazon', 'facebook', 'paypal', 'instagram', 'linkedin']
-            if found_in_subdomain and domain_name_only.lower() not in safe_brands:
-                heuristics['suspicious_keywords_in_subdomain'] = found_in_subdomain
-                penalty += 0.2
+            if not is_trusted_sso:
+                if found_in_domain:
+                    heuristics['suspicious_keywords_in_root'] = found_in_domain
+                    penalty += 0.4
+                
+                safe_brands = ['google', 'microsoft', 'apple', 'amazon', 'facebook', 'paypal', 'instagram', 'linkedin']
+                if found_in_subdomain and domain_name_only.lower() not in safe_brands:
+                    heuristics['suspicious_keywords_in_subdomain'] = found_in_subdomain
+                    penalty += 0.2
 
             # --- EVASION FIX 3: Substring Brand Spoofing ---
-            # Detects "paypal-verify.com" which `fuzz.ratio` misses
             popular_brands = ['paypal', 'google', 'microsoft', 'apple', 'amazon', 'netflix', 'facebook', 'instagram', 'linkedin', 'bankofamerica']
             typosquatting_target = None
             
-            for brand in popular_brands:
-                # 1. Exact fuzzy match (catches paypa1)
-                if fuzz.ratio(domain_name_only.lower(), brand) > 80:
-                    typosquatting_target = brand
-                    break
-                # 2. Substring match (catches paypal-verify)
-                elif brand in domain_name_only.lower() and domain_name_only.lower() != brand:
-                    typosquatting_target = brand
-                    break
-                # 3. Partial ratio (catches paypal-login-support)
-                elif fuzz.partial_ratio(domain_name_only.lower(), brand) > 85 and domain_name_only.lower() != brand:
-                    typosquatting_target = brand
-                    break
-                    
-            if typosquatting_target:
-                heuristics['typosquatting_warning'] = f"Domain mimics brand: '{typosquatting_target}'"
-                penalty += 0.5
+            if not is_trusted_sso:
+                for brand in popular_brands:
+                    if fuzz.ratio(domain_name_only.lower(), brand) > 80:
+                        typosquatting_target = brand
+                        break
+                    elif brand in domain_name_only.lower() and domain_name_only.lower() != brand:
+                        typosquatting_target = brand
+                        break
+                    elif fuzz.partial_ratio(domain_name_only.lower(), brand) > 85 and domain_name_only.lower() != brand:
+                        typosquatting_target = brand
+                        break
+                        
+                if typosquatting_target:
+                    heuristics['typosquatting_warning'] = f"Domain mimics brand: '{typosquatting_target}'"
+                    penalty += 0.5
 
             # Structural Checks
-            if hostname.count('-') > 2:
-                heuristics['excessive_hyphens'] = True
-                penalty += 0.2
-            if extracted.suffix.lower() in ['xyz', 'top', 'tk', 'gq', 'cf', 'ml', 'work', 'click']:
-                heuristics['suspicious_tld'] = extracted.suffix
-                penalty += 0.3
-            if len(subdomain.split('.')) > 1:
-                heuristics['deep_subdomains'] = subdomain
-                penalty += 0.25
+            if not is_trusted_sso:
+                if hostname.count('-') > 2:
+                    heuristics['excessive_hyphens'] = True
+                    penalty += 0.2
+                if extracted.suffix.lower() in ['xyz', 'top', 'tk', 'gq', 'cf', 'ml', 'work', 'click']:
+                    heuristics['suspicious_tld'] = extracted.suffix
+                    penalty += 0.3
+                if len(subdomain.split('.')) > 1:
+                    heuristics['deep_subdomains'] = subdomain
+                    penalty += 0.25
 
             # Entropy Check
             domain_entropy = calculate_entropy(domain_name_only)
             heuristics['domain_entropy'] = round(domain_entropy, 2)
-            if domain_entropy > 3.2 and len(domain_name_only) > 6:
+            if not is_trusted_sso and domain_entropy > 3.2 and len(domain_name_only) > 6:
                 heuristics['dga_entropy_warning'] = "Randomly generated domain (DGA)"
                 penalty += 0.4
+            
+            # Apply SSO Override
+            if is_trusted_sso:
+                heuristics['trusted_sso_flow'] = True
+                penalty = min(penalty, 0.1)
 
         # DNS & WHOIS
         if not is_ip:
@@ -254,8 +253,7 @@ def analyze_url(url: str):
                     now = datetime.now(creation_date.tzinfo) if creation_date.tzinfo else datetime.now()
                     age_days = (now - creation_date).days
                     heuristics['domain_age_days'] = age_days
-                    if age_days < 30:
-                        # If it's a new domain AND has bad keywords, heavy penalty
+                    if age_days < 30 and not is_trusted_sso:
                         if found_in_domain or found_in_subdomain:
                             penalty += 0.4
                             heuristics['new_domain_with_keywords'] = True

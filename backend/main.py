@@ -21,23 +21,23 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Define allowed origins for local development
-# (We will update this to your Vercel URL after deployment)
 origins = [
     "http://localhost:8080",
     "http://127.0.0.1:8080",
-    "http://localhost:5500", # If using VS Code Live Server
+    "http://localhost:5500", 
     "http://127.0.0.1:5500"
+    # (You will add your Vercel URL here later)
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,         # Restrict to trusted frontend URLs
-    allow_credentials=False,       # SECURE: We don't use cookies/sessions
-    allow_methods=["GET", "POST", "DELETE"], # Restrict to the methods you actually use
-    allow_headers=["Content-Type"],          # Restrict to necessary headers
+    allow_origins=origins,
+    allow_credentials=False,
+    # ADD "OPTIONS" to the list of allowed methods:
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"], 
+    # Allow all headers to prevent preflight blocking:
+    allow_headers=["*"], 
 )
-
 # --- NEW: Strict Input Validation ---
 class URLRequest(BaseModel):
     url: str
