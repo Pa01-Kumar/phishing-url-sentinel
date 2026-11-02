@@ -222,7 +222,7 @@
             } else {
                 screenshotContainer.classList.add('hidden');
             }
-            
+
             // 4. Redirect Chain
             const redirectContainer = document.getElementById('redirectContainer');
             const redirectList = document.getElementById('redirectList');
@@ -297,15 +297,36 @@
                     const li = document.createElement('li');
                     li.className = "flex justify-between items-center border-b border-gray-700 pb-2";
                     
-                    // Added the 'X' delete button with the specific ID
-                    li.innerHTML = `
-                        <span class="truncate w-1/2" title="${item.url}">${item.url}</span>
-                        <span class="${colorClass} font-bold uppercase text-xs">${item.verdict}</span>
-                        <span class="text-gray-500 text-xs w-24 text-right hidden sm:block">${item.timestamp}</span>
-                        <button onclick="deleteSingleScan(${item.id})" class="text-gray-500 hover:text-red-500 transition-colors ml-2 font-bold text-base" title="Delete Scan">
-                            ✖
-                        </button>
-                    `;
+                    // 1. Create the URL element safely
+                    const urlSpan = document.createElement('span');
+                    urlSpan.className = "truncate w-1/2";
+                    urlSpan.title = item.url; // Sets attribute safely
+                    urlSpan.textContent = item.url; // Sets text safely (Escapes HTML)
+
+                    // 2. Create the Verdict element safely
+                    const verdictSpan = document.createElement('span');
+                    verdictSpan.className = `${colorClass} font-bold uppercase text-xs`;
+                    verdictSpan.textContent = item.verdict;
+
+                    // 3. Create the Timestamp element safely
+                    const timeSpan = document.createElement('span');
+                    timeSpan.className = "text-gray-500 text-xs w-24 text-right hidden sm:block";
+                    timeSpan.textContent = item.timestamp;
+
+                    // 4. Create the Delete Button safely
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.className = "text-gray-500 hover:text-red-500 transition-colors ml-2 font-bold text-base";
+                    deleteBtn.title = "Delete Scan";
+                    deleteBtn.textContent = "✖";
+                    // Attach the event listener directly in JS instead of inline HTML
+                    deleteBtn.onclick = () => deleteSingleScan(item.id);
+
+                    // 5. Assemble the list item
+                    li.appendChild(urlSpan);
+                    li.appendChild(verdictSpan);
+                    li.appendChild(timeSpan);
+                    li.appendChild(deleteBtn);
+
                     historyList.appendChild(li);
                 });
             } catch (error) {
