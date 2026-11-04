@@ -7,7 +7,7 @@ import ipaddress
 import requests
 import tldextract
 import whois
-import idna  # NEW: For Punycode decoding
+import idna
 from collections import Counter
 from datetime import datetime
 from transformers import pipeline
@@ -115,9 +115,8 @@ def calculate_entropy(text: str) -> float:
     return entropy
 
 def normalize_homoglyphs(text: str) -> str:
-    """Converts common Cyrillic/Greek lookalikes to their Latin equivalents."""
     homoglyphs = {
-        'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'у': 'y', 'х': 'x', # Cyrillic
+        'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'у': 'y', 'х': 'x',
         'і': 'i', 'ј': 'j', 'ѕ': 's', 'ԁ': 'd', 'ԛ': 'q', 'ԝ': 'w', 'ӏ': 'l',
         'Α': 'A', 'Β': 'B', 'Ε': 'E', 'Ζ': 'Z', 'Η': 'H', 'Ι': 'I', 'Κ': 'K', 
         'Μ': 'M', 'Ν': 'N', 'Ο': 'O', 'Ρ': 'P', 'Τ': 'T', 'Υ': 'Y', 'Χ': 'X'
@@ -151,13 +150,11 @@ def analyze_url(url: str):
         raw_hostname = parsed_url.hostname if parsed_url.hostname else final_url.split('/')[0]
 
         # --- FIX 2.2: IDN Homoglyph / Punycode ---
-        # 1. Decode Punycode (xn--pple-43d -> apple)
         try:
             decoded_hostname = idna.decode(raw_hostname)
         except idna.IDNAError:
             decoded_hostname = raw_hostname
             
-        # 2. Normalize Homoglyphs (Cyrillic 'а' -> Latin 'a')
         normalized_hostname = normalize_homoglyphs(decoded_hostname)
 
         if decoded_hostname != raw_hostname or normalized_hostname != decoded_hostname:
@@ -166,9 +163,9 @@ def analyze_url(url: str):
             heuristics['normalized_hostname'] = normalized_hostname
             penalty += 1.0 # Instant malicious verdict
 
-        hostname = normalized_hostname # Use this for all subsequent checks
+        hostname = normalized_hostname
 
-        # EVASION FIX 5: IP Encodings (Hex/Octal)
+        # EVASION FIX 5: IP Encodings
         is_ip = False
         try:
             ipaddress.ip_address(hostname)
@@ -213,7 +210,6 @@ def analyze_url(url: str):
                     penalty += 0.2
 
             # --- FIX 2.3: Advanced Typosquatting ---
-            # Expanded list to include more brands, banks, and cloud providers
             popular_brands = [
                 'paypal', 'google', 'microsoft', 'apple', 'amazon', 'netflix', 
                 'facebook', 'instagram', 'linkedin', 'bankofamerica', 'chase', 
@@ -224,24 +220,17 @@ def analyze_url(url: str):
             typosquatting_target = None
             
             if not is_trusted_sso:
-                # 1. Exact match check (if it's exactly the brand, it's not typosquatting)
                 if domain_name_only not in popular_brands:
                     for brand in popular_brands:
-                        # 2. Direct string similarity (catches paypa1, rnicrosoft)
                         if fuzz.ratio(domain_name_only, brand) > 80:
                             typosquatting_target = brand
                             break
                         
-                        # 3. Substring/Hyphen check (catches paypal-verification-center.com)
-                        # Only trigger if the brand is a distinct part of the string
                         if brand in domain_name_only and len(domain_name_only) > len(brand):
-                            # To fix the "apply.com vs apple" false positive:
-                            # Require hyphens, or the brand being at the very start/end of a much longer string
                             if '-' in domain_name_only or len(domain_name_only) > len(brand) + 3:
                                 typosquatting_target = brand
                                 break
                                 
-                        # 4. Fuzzy partial ratio (catches secure-microsoft-auth)
                         if fuzz.partial_ratio(domain_name_only, brand) > 90:
                             typosquatting_target = brand
                             break
@@ -261,11 +250,26 @@ def analyze_url(url: str):
                     heuristics['deep_subdomains'] = subdomain
                     penalty += 0.25
 
+            # --- FIX 2.4: Flawed Shannon Entropy (DGA) ---
             domain_entropy = calculate_entropy(domain_name_only)
             heuristics['domain_entropy'] = round(domain_entropy, 2)
-            if not is_trusted_sso and domain_entropy > 3.2 and len(domain_name_only) > 6:
-                heuristics['dga_entropy_warning'] = "Randomly generated domain (DGA)"
-                penalty += 0.4
+            
+            if not is_trusted_sso and len(domain_name_only) > 6:
+                digits = sum(1 for c in domain_name_only if c.isdigit())
+                vowels = sum(1 for c in domain_name_only if c in 'aeiou')
+                vowel_ratio = vowels / len(domain_name_only)
+                
+                is_dga = False
+                
+                if domain_entropy > 3.8:
+                    is_dga = True
+                elif domain_entropy > 3.3:
+                    if digits >= 2 or vowel_ratio < 0.2:
+                        is_dga = True
+                        
+                if is_dga:
+                    heuristics['dga_entropy_warning'] = "Randomly generated domain (DGA) characteristics"
+                    penalty += 0.4
             
             # CRITICAL FIX: Never allow SSO whitelist to override a homoglyph attack!
             if is_trusted_sso and not heuristics.get('punycode_homoglyph_attack'):
