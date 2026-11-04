@@ -61,7 +61,7 @@ def read_root():
 
 @app.post("/scan")
 @limiter.limit("5/minute") 
-async def scan_url(request: Request, url_request: URLRequest):
+def scan_url(request: Request, url_request: URLRequest):
     result = analyze_url(url_request.url)
     database.save_scan(result["url"], result["risk_score"], result["verdict"])
     return result

@@ -8,6 +8,7 @@ import requests
 import tldextract
 import whois
 import idna
+import time  # NEW: For caching
 from collections import Counter
 from datetime import datetime
 from transformers import pipeline
@@ -20,6 +21,15 @@ VT_API_KEY = os.getenv("VIRUSTOTAL_API_KEY")
 
 print("Loading ML Model...")
 classifier = pipeline("text-classification", model="Eason918/malicious-url-detector")
+
+# --- NEW: Browser User-Agent to bypass anti-bot filters ---
+BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+}
+
+# --- NEW: In-Memory Cache for VirusTotal (Saves API Quota) ---
+VT_CACHE = {}
+CACHE_TTL = 900  # 15 minutes in seconds
 
 HIGH_REPUTATION_DOMAINS = {
     'google', 'microsoft', 'apple', 'amazon', 'facebook', 'meta', 'netflix', 'adobe', 
@@ -53,14 +63,19 @@ def trace_redirects(url: str):
     chain = [url]
     penalty = 0.0
     final_url = url
+    
     if not is_safe_url(url):
         chain.append("⛔ Blocked: URL points to a private/internal network (SSRF Protection).")
         return final_url, chain, 1.0
+
     try:
         current_url = url
         max_redirects = 5
+        
         for _ in range(max_redirects):
-            response = requests.get(current_url, timeout=5, allow_redirects=False, stream=True)
+            # FIX 4.3: Add BROWSER_HEADERS to bypass evasion
+            response = requests.get(current_url, timeout=5, allow_redirects=False, stream=True, headers=BROWSER_HEADERS)
+            
             if response.status_code in (301, 302, 303, 307, 308):
                 next_url = response.headers.get('Location')
                 if not next_url: break
@@ -78,7 +93,9 @@ def trace_redirects(url: str):
                     html_content = response.text[:5000]
                     js_match = re.search(r'(?:window\.location|document\.location|location\.href)\s*=\s*[\'"]([^\'"]+)[\'"]', html_content)
                     meta_match = re.search(r'<meta[^>]+http-equiv=[\'"]?refresh[\'"]?[^>]+url=([^\'">]+)', html_content, re.IGNORECASE)
+                    
                     js_redirect = js_match.group(1) if js_match else (meta_match.group(1) if meta_match else None)
+                    
                     if js_redirect:
                         if not js_redirect.startswith('http'):
                             js_redirect = f"http://{urlparse(current_url).hostname}/{js_redirect.lstrip('/')}"
@@ -89,6 +106,7 @@ def trace_redirects(url: str):
                 except Exception:
                     pass
                 break
+                
         final_url = current_url
         penalty = min(penalty, 0.3)
     except Exception:
@@ -96,9 +114,16 @@ def trace_redirects(url: str):
     return final_url, chain, penalty
 
 def check_virustotal(url: str):
+    # FIX 4.2: Check Cache First
+    if url in VT_CACHE:
+        cached_time, cached_result = VT_CACHE[url]
+        if time.time() - cached_time < CACHE_TTL:
+            return cached_result
+
     if not VT_API_KEY or VT_API_KEY == "your_long_api_key_here":
         return {"error": "VirusTotal API key not configured.", "malicious": 0, "vt_penalty": 0.0}
-    headers = {"x-apikey": VT_API_KEY}
+    
+    headers = {"x-apikey": VT_API_KEY, **BROWSER_HEADERS}
     url_id = base64.urlsafe_b64encode(url.encode()).decode().strip("=")
     try:
         response = requests.get(f"https://www.virustotal.com/api/v3/urls/{url_id}", headers=headers, timeout=5)
@@ -106,7 +131,16 @@ def check_virustotal(url: str):
             stats = response.json()['data']['attributes']['last_analysis_stats']
             malicious_count = stats.get('malicious', 0)
             total_engines = malicious_count + stats.get('suspicious', 0) + stats.get('harmless', 0) + stats.get('undetected', 0)
-            return {"malicious": malicious_count, "suspicious": stats.get('suspicious', 0), "total_engines": total_engines, "vt_penalty": min(malicious_count * 0.15, 0.6)}
+            res = {"malicious": malicious_count, "suspicious": stats.get('suspicious', 0), "total_engines": total_engines, "vt_penalty": min(malicious_count * 0.15, 0.6)}
+            
+            # Save to Cache
+            VT_CACHE[url] = (time.time(), res)
+            return res
+            
+        elif response.status_code == 429:
+            # FIX 4.2: Handle Rate Limiting Gracefully
+            return {"error": "VirusTotal Rate Limit Reached. Wait a minute.", "malicious": 0, "vt_penalty": 0.0}
+            
     except Exception:
         pass
     return {"malicious": 0, "suspicious": 0, "total_engines": 70, "vt_penalty": 0.0}
@@ -197,7 +231,6 @@ def analyze_url(url: str):
             
             is_high_reputation = (domain_name_only in HIGH_REPUTATION_DOMAINS) or (extracted.suffix.lower() in HIGH_REPUTATION_DOMAINS)
 
-            # --- 1. DYNAMIC TRUST: CHECK WHOIS FIRST ---
             try:
                 w = whois.whois(root_domain)
                 creation_date = w.creation_date[0] if isinstance(w.creation_date, list) else w.creation_date
@@ -206,7 +239,6 @@ def analyze_url(url: str):
                     age_days = (now - creation_date).days
                     heuristics['domain_age_days'] = age_days
                     
-                    # If domain is older than 2 years (730 days) and VT says it's clean, trust it.
                     if age_days > 730 and vt_result.get('malicious', 0) == 0:
                         is_established_domain = True
                         heuristics['dynamic_trust_granted'] = True
@@ -287,11 +319,10 @@ def analyze_url(url: str):
     except Exception as e:
         heuristics['parsing_error'] = str(e)
 
-    # --- THE BULLETPROOF OVERRIDE ---
     if (is_high_reputation or is_established_domain) and not heuristics.get('punycode_homoglyph_attack') and not heuristics.get('typosquatting_warning'):
         heuristics['trusted_domain'] = True
-        penalty = min(penalty, 0.1)  # Force cap penalty
-        ml_score = 0.0               # Force ignore ML model
+        penalty = min(penalty, 0.1)
+        ml_score = 0.0
         heuristics['ml_score_overridden'] = True
 
     final_score = min(ml_score + penalty, 1.0)
