@@ -100,6 +100,11 @@
     <script>
         let currentScanData = null;
 
+        // Dynamic API Base URL: works seamlessly whether hosted together (Render, Hugging Face, etc.) or standalone
+        const API_BASE = (window.location.protocol.startsWith('http') && !['8080', '5500', '3000'].includes(window.location.port))
+            ? ''
+            : 'http://127.0.0.1:8000';
+
         function validateAndFormatURL(input) {
             let urlToScan = input.trim();
             if (!urlToScan) return null;
@@ -128,7 +133,7 @@
             document.getElementById('resultContainer').classList.add('hidden');
 
             try {
-                const response = await fetch('http://127.0.0.1:8000/scan', {
+                const response = await fetch(`${API_BASE}/scan`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ url: urlInput })
@@ -267,7 +272,7 @@
         // --- UPDATED: History Load with Feedback Buttons & XSS Protection ---
         async function loadHistory() {
             try {
-                const response = await fetch('http://127.0.0.1:8000/history');
+                const response = await fetch(`${API_BASE}/history`);
                 const history = await response.json();
                 const historyList = document.getElementById('historyList');
                 historyList.innerHTML = ''; 
@@ -345,7 +350,7 @@
         async function clearHistory() {
             if (!confirm("Are you sure you want to delete all scan history?")) return;
             try {
-                const response = await fetch('http://127.0.0.1:8000/history', { method: 'DELETE' });
+                const response = await fetch(`${API_BASE}/history`, { method: 'DELETE' });
                 if (response.ok) loadHistory(); 
             } catch (error) {
                 console.error("Failed to clear history", error);
@@ -354,7 +359,7 @@
 
         async function deleteSingleScan(scanId) {
             try {
-                const response = await fetch(`http://127.0.0.1:8000/history/${scanId}`, { method: 'DELETE' });
+                const response = await fetch(`${API_BASE}/history/${scanId}`, { method: 'DELETE' });
                 if (response.ok) loadHistory(); 
             } catch (error) {
                 console.error("Failed to delete scan", error);
@@ -363,7 +368,7 @@
 
         async function submitFeedback(scanId, feedbackType) {
             try {
-                const response = await fetch('http://127.0.0.1:8000/feedback', {
+                const response = await fetch(`${API_BASE}/feedback`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ scan_id: scanId, feedback: feedbackType })

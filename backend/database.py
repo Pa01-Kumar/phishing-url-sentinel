@@ -1,7 +1,8 @@
 import sqlite3
+import os
 from datetime import datetime
 
-DB_FILE = "history.db"
+DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history.db")
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -20,6 +21,7 @@ def init_db():
     conn.close()
 
 def save_scan(url: str, risk_score: float, verdict: str):
+    init_db()
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -31,6 +33,7 @@ def save_scan(url: str, risk_score: float, verdict: str):
     conn.close()
 
 def update_feedback(scan_id: int, feedback: str):
+    init_db()
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('UPDATE scans SET feedback = ? WHERE id = ?', (feedback, scan_id))
@@ -38,6 +41,7 @@ def update_feedback(scan_id: int, feedback: str):
     conn.close()
 
 def get_history(limit: int = 10):
+    init_db()
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('SELECT id, url, risk_score, verdict, timestamp, feedback FROM scans ORDER BY id DESC LIMIT ?', (limit,))
@@ -53,6 +57,7 @@ def get_history(limit: int = 10):
     return history
 
 def delete_scan(scan_id: int):
+    init_db()
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('DELETE FROM scans WHERE id = ?', (scan_id,))
@@ -60,6 +65,7 @@ def delete_scan(scan_id: int):
     conn.close()
 
 def clear_history():
+    init_db()
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('DELETE FROM scans')

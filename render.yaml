@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: phishing-url-sentinel
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: VIRUSTOTAL_API_KEY
+        sync: false
