@@ -5,40 +5,44 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from contextlib import asynccontextmanager  # NEW: For database startup
 from detector import analyze_url
 import database
 
-# Initialize Rate Limiter (Tracks requests by IP address)
+# NEW: Initialize the database when the server starts
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    database.init_db()
+    yield
+
 limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
     title="Phishing URL Sentinel",
     description="An API to detect phishing URLs using ML models and heuristics.",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan  # NEW: Connect the lifespan handler
 )
 
-# Add Rate Limiting to the app
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# CORS Configuration
 origins = [
     "http://localhost:8080",
     "http://127.0.0.1:8080",
-    "http://localhost:5500", 
+    "http://localhost:5500",
     "http://127.0.0.1:5500"
-    # (You will add your Vercel URL here later)
 ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=False,
-    # ADD "OPTIONS" to the list of allowed methods:
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"], 
-    # Allow all headers to prevent preflight blocking:
-    allow_headers=["*"], 
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
 )
-# --- NEW: Strict Input Validation ---
+
 class URLRequest(BaseModel):
     url: str
 
@@ -55,7 +59,6 @@ class URLRequest(BaseModel):
 def read_root():
     return {"message": "Phishing Sentinel API is running!"}
 
-# --- NEW: Apply Rate Limit (Max 5 requests per minute per IP) ---
 @app.post("/scan")
 @limiter.limit("5/minute") 
 async def scan_url(request: Request, url_request: URLRequest):
@@ -67,11 +70,13 @@ async def scan_url(request: Request, url_request: URLRequest):
 def get_scan_history():
     return database.get_history()
 
+# FIXED 3.1: Clear history route is now separate and correct
 @app.delete("/history")
 def clear_scan_history():
     database.clear_history()
     return {"message": "History cleared successfully"}
 
+# FIXED 3.1: Single scan delete route is now separate and correct
 @app.delete("/history/{scan_id}")
 def delete_single_scan(scan_id: int):
     database.delete_scan(scan_id)
