@@ -8,7 +8,7 @@
 </head>
 <body class="bg-gray-900 text-white font-sans min-h-screen flex flex-col items-center pt-20">
 
-    <div class="w-full max-w-2xl px-4 pb-20">
+    <div class="w-full max-w-3xl px-4 pb-20">
         <!-- Header -->
         <div class="text-center mb-10">
             <h1 class="text-4xl font-bold text-blue-400 mb-2">🛡️ Phishing Sentinel</h1>
@@ -27,7 +27,7 @@
 
         <!-- Loading Spinner -->
         <div id="loading" class="hidden text-center text-blue-400 mb-8 animate-pulse">
-            <p>Analyzing URL via ML models, VirusTotal, and WHOIS data... (This may take a few seconds)</p>
+            <p>Analyzing URL via ML models, VirusTotal, URLhaus, and WHOIS data... (This may take a few seconds)</p>
         </div>
 
         <!-- Results Area -->
@@ -98,22 +98,16 @@
     </div>
 
     <script>
-        // Global variable to hold the current scan result for downloading
         let currentScanData = null;
 
-        // 1. Validate and format the URL before sending to backend
         function validateAndFormatURL(input) {
             let urlToScan = input.trim();
             if (!urlToScan) return null;
-            
-            // Auto-add https:// if the user forgot it
             if (!/^https?:\/\//i.test(urlToScan)) {
                 urlToScan = 'https://' + urlToScan;
             }
-            
             try {
                 new URL(urlToScan); 
-                // Ensure there is at least one dot (blocks input like "hello")
                 if (!urlToScan.includes('.')) throw new Error("Invalid format");
                 return urlToScan;
             } catch (e) {
@@ -123,14 +117,11 @@
 
         async function scanURL() {
             const rawInput = document.getElementById('urlInput').value;
-            
-            // Apply validation
             const urlInput = validateAndFormatURL(rawInput);
             if (!urlInput) {
                 return alert('Please enter a valid URL (e.g., example.com or https://example.com)');
             }
 
-            // UI Updates
             document.getElementById('scanBtn').disabled = true;
             document.getElementById('scanBtn').innerText = 'Scanning...';
             document.getElementById('loading').classList.remove('hidden');
@@ -143,46 +134,35 @@
                     body: JSON.stringify({ url: urlInput })
                 });
 
-                // --- NEW: Handle Rate Limiting & Validation Errors ---
-                if (response.status === 429) {
-                    throw new Error("Rate limit exceeded. Please wait a minute before scanning again.");
-                }
+                if (response.status === 429) throw new Error("Rate limit exceeded. Please wait a minute.");
                 if (!response.ok) {
-                    const errorData = await response.json();
-                    // Handle Pydantic validation errors
-                    if (response.status === 422) {
-                        throw new Error("Invalid URL format. Please check the URL and try again.");
-                    }
+                    if (response.status === 422) throw new Error("Invalid URL format blocked by security validation.");
                     throw new Error("Server error occurred.");
                 }
 
                 const data = await response.json();
                 displayResult(data);
             } catch (error) {
-                alert(error.message); // Show the actual error to the user
+                alert(error.message);
                 console.error(error);
             } finally {
                 document.getElementById('scanBtn').disabled = false;
                 document.getElementById('scanBtn').innerText = 'Scan';
                 document.getElementById('loading').classList.add('hidden');
             }
-           
         }
 
         function displayResult(data) {
-            // Save data globally for the download button
             currentScanData = data; 
 
             document.getElementById('resultContainer').classList.remove('hidden');
             document.getElementById('resultUrl').innerText = data.url;
             
-            // 1. Risk Score
             const score = data.risk_score;
             document.getElementById('riskScoreText').innerText = (score * 100).toFixed(1) + '%';
             const riskBar = document.getElementById('riskBar');
             riskBar.style.width = (score * 100) + '%';
 
-            // 2. Verdict Badge
             const badge = document.getElementById('verdictBadge');
             badge.innerText = data.verdict.toUpperCase();
             badge.className = "px-4 py-1 rounded-full font-bold text-sm ";
@@ -198,7 +178,7 @@
                 badge.className += "bg-green-500 text-white";
             }
 
-            // 3. Website Screenshot (SECURE: Sanitized to prevent PII Leakage)
+            // Website Screenshot (Sanitized URL)
             const screenshotContainer = document.getElementById('screenshotContainer');
             const websiteImage = document.getElementById('websiteImage');
             const imageLoading = document.getElementById('imageLoading');
@@ -207,7 +187,6 @@
             
             if (rawFinalUrl && rawFinalUrl.startsWith('http')) {
                 try {
-                    // Sanitize the URL: Strip query parameters (tokens) and hash fragments
                     const urlObj = new URL(rawFinalUrl);
                     const safeUrl = `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}`;
                     
@@ -216,14 +195,13 @@
                     imageLoading.style.display = 'block';
                     websiteImage.src = `https://image.thum.io/get/width/800/crop/600/${safeUrl}?t=${Date.now()}`;
                 } catch (e) {
-                    // If URL parsing fails (e.g., malformed), hide the screenshot container
                     screenshotContainer.classList.add('hidden');
                 }
             } else {
                 screenshotContainer.classList.add('hidden');
             }
 
-            // 4. Redirect Chain
+            // Redirect Chain
             const redirectContainer = document.getElementById('redirectContainer');
             const redirectList = document.getElementById('redirectList');
             redirectList.innerHTML = '';
@@ -239,11 +217,10 @@
                 redirectContainer.classList.add('hidden');
             }
 
-            // 5. Populate Details & VirusTotal
+            // Detection Details & VirusTotal
             const detailsList = document.getElementById('detailsList');
             detailsList.innerHTML = ''; 
             
-            // VirusTotal
             if (data.details.virustotal_stats) {
                 const vt = data.details.virustotal_stats;
                 const vtLi = document.createElement('li');
@@ -255,6 +232,14 @@
                     vtLi.innerHTML = `<span class="text-blue-400">VirusTotal:</span> <span class="${color}">${vt.malicious} / ${vt.total_engines}</span> security vendors flagged this URL.`;
                 }
                 detailsList.appendChild(vtLi);
+            }
+
+            // URLhaus
+            if (data.details.urlhaus_stats && data.details.urlhaus_stats.status === 'online') {
+                const uLi = document.createElement('li');
+                uLi.className = "border-b border-gray-700 pb-2 mb-2 font-bold text-red-400";
+                uLi.innerHTML = `<span class="text-blue-400">URLhaus:</span> <span class="text-red-400">Known Malware (${data.details.urlhaus_stats.threat})</span>`;
+                detailsList.appendChild(uLi);
             }
             
             // Heuristics
@@ -268,10 +253,8 @@
             loadHistory(); 
         }
 
-        // 2. Download Report Function
         function downloadReport() {
             if (!currentScanData) return;
-            
             const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(currentScanData, null, 2));
             const downloadAnchorNode = document.createElement('a');
             downloadAnchorNode.setAttribute("href", dataStr);
@@ -281,7 +264,7 @@
             downloadAnchorNode.remove();
         }
 
-        // 3. Load History Function (UPDATED with individual delete buttons)
+        // --- UPDATED: History Load with Feedback Buttons & XSS Protection ---
         async function loadHistory() {
             try {
                 const response = await fetch('http://127.0.0.1:8000/history');
@@ -295,37 +278,62 @@
                     if (item.verdict === 'suspicious') colorClass = "text-yellow-400";
 
                     const li = document.createElement('li');
-                    li.className = "flex justify-between items-center border-b border-gray-700 pb-2";
+                    li.className = "flex justify-between items-center border-b border-gray-700 pb-2 gap-2";
                     
-                    // 1. Create the URL element safely
+                    // 1. URL
                     const urlSpan = document.createElement('span');
-                    urlSpan.className = "truncate w-1/2";
-                    urlSpan.title = item.url; // Sets attribute safely
-                    urlSpan.textContent = item.url; // Sets text safely (Escapes HTML)
+                    urlSpan.className = "truncate w-1/3";
+                    urlSpan.title = item.url; 
+                    urlSpan.textContent = item.url;
 
-                    // 2. Create the Verdict element safely
+                    // 2. Verdict
                     const verdictSpan = document.createElement('span');
-                    verdictSpan.className = `${colorClass} font-bold uppercase text-xs`;
+                    verdictSpan.className = `${colorClass} font-bold uppercase text-xs w-20 text-center`;
                     verdictSpan.textContent = item.verdict;
 
-                    // 3. Create the Timestamp element safely
+                    // 3. Timestamp
                     const timeSpan = document.createElement('span');
-                    timeSpan.className = "text-gray-500 text-xs w-24 text-right hidden sm:block";
+                    timeSpan.className = "text-gray-500 text-xs w-28 text-right hidden sm:block";
                     timeSpan.textContent = item.timestamp;
 
-                    // 4. Create the Delete Button safely
+                    // 4. Actions (Feedback & Delete)
+                    const btnContainer = document.createElement('div');
+                    btnContainer.className = "flex items-center justify-end w-28";
+
+                    if (item.feedback === 'none' || !item.feedback) {
+                        const thumbsUp = document.createElement('button');
+                        thumbsUp.className = "text-gray-500 hover:text-red-400 ml-2 transition-colors text-base";
+                        thumbsUp.title = "True Positive (Correct)";
+                        thumbsUp.textContent = "👍";
+                        thumbsUp.onclick = () => submitFeedback(item.id, 'true_positive');
+                        
+                        const thumbsDown = document.createElement('button');
+                        thumbsDown.className = "text-gray-500 hover:text-green-400 ml-1 transition-colors text-base";
+                        thumbsDown.title = "False Positive (Incorrect)";
+                        thumbsDown.textContent = "👎";
+                        thumbsDown.onclick = () => submitFeedback(item.id, 'false_positive');
+                        
+                        btnContainer.appendChild(thumbsUp);
+                        btnContainer.appendChild(thumbsDown);
+                    } else {
+                        const feedbackSpan = document.createElement('span');
+                        feedbackSpan.className = "text-xs text-gray-400 ml-2 w-16 text-right";
+                        feedbackSpan.textContent = item.feedback === 'true_positive' ? '👍' : '👎';
+                        btnContainer.appendChild(feedbackSpan);
+                    }
+
                     const deleteBtn = document.createElement('button');
                     deleteBtn.className = "text-gray-500 hover:text-red-500 transition-colors ml-2 font-bold text-base";
                     deleteBtn.title = "Delete Scan";
                     deleteBtn.textContent = "✖";
-                    // Attach the event listener directly in JS instead of inline HTML
                     deleteBtn.onclick = () => deleteSingleScan(item.id);
+                    btnContainer.appendChild(deleteBtn);
 
-                    // 5. Assemble the list item
+                    // Assemble row
                     li.appendChild(urlSpan);
                     li.appendChild(verdictSpan);
                     li.appendChild(timeSpan);
-                    li.appendChild(deleteBtn);
+                    li.appendChild(btnContainer);
 
                     historyList.appendChild(li);
                 });
@@ -334,35 +342,40 @@
             }
         }
 
-        // 4. Clear Entire History Function
         async function clearHistory() {
             if (!confirm("Are you sure you want to delete all scan history?")) return;
-            
             try {
                 const response = await fetch('http://127.0.0.1:8000/history', { method: 'DELETE' });
-                if (response.ok) {
-                    loadHistory(); 
-                }
+                if (response.ok) loadHistory(); 
             } catch (error) {
                 console.error("Failed to clear history", error);
             }
         }
 
-        // 5. Delete Single Scan Function
         async function deleteSingleScan(scanId) {
             try {
-                const response = await fetch(`http://127.0.0.1:8000/history/${scanId}`, { 
-                    method: 'DELETE' 
-                });
-                if (response.ok) {
-                    loadHistory(); // Instantly refresh the list
-                }
+                const response = await fetch(`http://127.0.0.1:8000/history/${scanId}`, { method: 'DELETE' });
+                if (response.ok) loadHistory(); 
             } catch (error) {
                 console.error("Failed to delete scan", error);
             }
         }
 
-        // Run loadHistory once when the page is first opened
+        async function submitFeedback(scanId, feedbackType) {
+            try {
+                const response = await fetch('http://127.0.0.1:8000/feedback', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ scan_id: scanId, feedback: feedbackType })
+                });
+                if (response.ok) {
+                    loadHistory(); // Refresh to show the new state
+                }
+            } catch (error) {
+                console.error("Failed to submit feedback", error);
+            }
+        }
+
         window.onload = loadHistory;
     </script>
 </body>

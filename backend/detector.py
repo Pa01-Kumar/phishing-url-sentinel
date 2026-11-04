@@ -1,3 +1,6 @@
+import mmh3
+import requests
+from bs4 import BeautifulSoup
 import os
 import re
 import math
@@ -162,6 +165,20 @@ def normalize_homoglyphs(text: str) -> str:
         'Μ': 'M', 'Ν': 'N', 'Ο': 'O', 'Ρ': 'P', 'Τ': 'T', 'Υ': 'Y', 'Χ': 'X'
     }
     return ''.join(homoglyphs.get(c, c) for c in text)
+def get_favicon_hash(url: str):
+    try:
+        response = requests.get(url, timeout=3, headers=BROWSER_HEADERS)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        icon_link = soup.find("link", rel=lambda x: x and 'icon' in x.lower())
+        if icon_link and icon_link.get('href'):
+            icon_url = urlparse(url)._replace(path=icon_link['href']).geturl()
+            icon_response = requests.get(icon_url, timeout=3, headers=BROWSER_HEADERS)
+            if icon_response.status_code == 200:
+                favicon = base64.b64encode(icon_response.content)
+                return mmh3.hash(favicon)
+    except Exception:
+        pass
+    return None
 
 def analyze_url(url: str):
     heuristics = {}
@@ -208,6 +225,7 @@ def analyze_url(url: str):
             ip_addr = socket.gethostbyname(hostname)
             network_iocs['ip_address'] = ip_addr
             network_iocs['ssl_cert'] = get_ssl_info(hostname)
+            network_iocs['favicon_hash'] = get_favicon_hash(final_url)        
         except Exception:
             pass
 
