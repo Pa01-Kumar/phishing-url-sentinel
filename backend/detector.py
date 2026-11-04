@@ -164,7 +164,7 @@ def analyze_url(url: str):
             heuristics['punycode_homoglyph_attack'] = True
             heuristics['original_hostname'] = raw_hostname
             heuristics['normalized_hostname'] = normalized_hostname
-            penalty += 0.6 # Massive penalty
+            penalty += 1.0 # Instant malicious verdict
 
         hostname = normalized_hostname # Use this for all subsequent checks
 
@@ -267,7 +267,8 @@ def analyze_url(url: str):
                 heuristics['dga_entropy_warning'] = "Randomly generated domain (DGA)"
                 penalty += 0.4
             
-            if is_trusted_sso:
+            # CRITICAL FIX: Never allow SSO whitelist to override a homoglyph attack!
+            if is_trusted_sso and not heuristics.get('punycode_homoglyph_attack'):
                 heuristics['trusted_sso_flow'] = True
                 penalty = min(penalty, 0.1)
 
