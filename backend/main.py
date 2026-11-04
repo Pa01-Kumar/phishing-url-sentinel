@@ -1,15 +1,17 @@
 from fastapi import FastAPI, Request
 from pydantic import BaseModel, field_validator
 import validators
+import uuid
+from datetime import datetime
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from contextlib import asynccontextmanager  # NEW: For database startup
+from contextlib import asynccontextmanager
 from detector import analyze_url
 import database
 
-# NEW: Initialize the database when the server starts
+# Initialize the database when the server starts
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     database.init_db()
@@ -21,7 +23,7 @@ app = FastAPI(
     title="Phishing URL Sentinel",
     description="An API to detect phishing URLs using ML models and heuristics.",
     version="1.0.0",
-    lifespan=lifespan  # NEW: Connect the lifespan handler
+    lifespan=lifespan
 )
 
 app.state.limiter = limiter
@@ -59,6 +61,7 @@ class URLRequest(BaseModel):
 def read_root():
     return {"message": "Phishing Sentinel API is running!"}
 
+# FIXED: Changed to 'def' to prevent Event Loop Starvation
 @app.post("/scan")
 @limiter.limit("5/minute") 
 def scan_url(request: Request, url_request: URLRequest):
@@ -66,17 +69,47 @@ def scan_url(request: Request, url_request: URLRequest):
     database.save_scan(result["url"], result["risk_score"], result["verdict"])
     return result
 
+# NEW: STIX 2.1 Threat Intel Export
+@app.post("/scan/stix")
+@limiter.limit("5/minute") 
+def scan_url_stix(request: Request, url_request: URLRequest):
+    # Run the normal scan first
+    result = analyze_url(url_request.url)
+    
+    # Format into STIX 2.1 Bundle
+    stix_bundle = {
+        "type": "bundle",
+        "id": f"bundle--{uuid.uuid4()}",
+        "objects": [
+            {
+                "type": "indicator",
+                "spec_version": "2.1",
+                "id": f"indicator--{uuid.uuid4()}",
+                "created": datetime.utcnow().isoformat() + "Z",
+                "modified": datetime.utcnow().isoformat() + "Z",
+                "name": f"Phishing Scan: {url_request.url}",
+                "description": f"Risk Score: {result['risk_score']} | Verdict: {result['verdict']}",
+                "indicator_types": ["malicious-activity" if result['verdict'] == 'malicious' else "anomalous-activity"],
+                "pattern": f"[url:value = '{url_request.url}']",
+                "pattern_type": "stix",
+                "valid_from": datetime.utcnow().isoformat() + "Z",
+                "x_sentinel_iocs": result['details'].get('network_iocs', {})
+            }
+        ]
+    }
+    return stix_bundle
+
 @app.get("/history")
 def get_scan_history():
     return database.get_history()
 
-# FIXED 3.1: Clear history route is now separate and correct
+# FIXED: Clear history route is separate and correct
 @app.delete("/history")
 def clear_scan_history():
     database.clear_history()
     return {"message": "History cleared successfully"}
 
-# FIXED 3.1: Single scan delete route is now separate and correct
+# FIXED: Single scan delete route is separate and correct
 @app.delete("/history/{scan_id}")
 def delete_single_scan(scan_id: int):
     database.delete_scan(scan_id)

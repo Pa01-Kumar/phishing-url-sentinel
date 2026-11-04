@@ -3,12 +3,13 @@ import re
 import math
 import base64
 import socket
+import ssl  # NEW: For SSL extraction
 import ipaddress
 import requests
 import tldextract
 import whois
 import idna
-import time  # NEW: For caching
+import time
 from collections import Counter
 from datetime import datetime
 from transformers import pipeline
@@ -22,14 +23,12 @@ VT_API_KEY = os.getenv("VIRUSTOTAL_API_KEY")
 print("Loading ML Model...")
 classifier = pipeline("text-classification", model="Eason918/malicious-url-detector")
 
-# --- NEW: Browser User-Agent to bypass anti-bot filters ---
 BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
-# --- NEW: In-Memory Cache for VirusTotal (Saves API Quota) ---
 VT_CACHE = {}
-CACHE_TTL = 900  # 15 minutes in seconds
+CACHE_TTL = 900
 
 HIGH_REPUTATION_DOMAINS = {
     'google', 'microsoft', 'apple', 'amazon', 'facebook', 'meta', 'netflix', 'adobe', 
@@ -59,6 +58,33 @@ def is_safe_url(url: str) -> bool:
     except Exception:
         return False
 
+# --- NEW: SSL Extraction ---
+def get_ssl_info(hostname: str):
+    try:
+        context = ssl.create_default_context()
+        with socket.create_connection((hostname, 443), timeout=3) as sock:
+            with context.wrap_socket(sock, server_hostname=hostname) as ssock:
+                cert = ssock.getpeercert()
+                return {
+                    "issuer": dict(x[0] for x in cert['issuer']).get('organizationName', 'Unknown'),
+                    "subject": dict(x[0] for x in cert['subject']).get('commonName', 'Unknown'),
+                    "valid_until": cert.get('notAfter', 'Unknown')
+                }
+    except Exception:
+        return None
+
+# --- NEW: URLhaus Integration ---
+def check_urlhaus(url: str):
+    try:
+        response = requests.post("https://urlhaus-api.abuse.ch/v1/url/", data={"url": url}, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("query_status") == "ok":
+                return {"status": data.get("url_status"), "threat": data.get("threat")}
+    except Exception:
+        pass
+    return None
+
 def trace_redirects(url: str):
     chain = [url]
     penalty = 0.0
@@ -71,11 +97,8 @@ def trace_redirects(url: str):
     try:
         current_url = url
         max_redirects = 5
-        
         for _ in range(max_redirects):
-            # FIX 4.3: Add BROWSER_HEADERS to bypass evasion
             response = requests.get(current_url, timeout=5, allow_redirects=False, stream=True, headers=BROWSER_HEADERS)
-            
             if response.status_code in (301, 302, 303, 307, 308):
                 next_url = response.headers.get('Location')
                 if not next_url: break
@@ -89,24 +112,7 @@ def trace_redirects(url: str):
                 current_url = next_url
                 penalty += 0.1
             else:
-                try:
-                    html_content = response.text[:5000]
-                    js_match = re.search(r'(?:window\.location|document\.location|location\.href)\s*=\s*[\'"]([^\'"]+)[\'"]', html_content)
-                    meta_match = re.search(r'<meta[^>]+http-equiv=[\'"]?refresh[\'"]?[^>]+url=([^\'">]+)', html_content, re.IGNORECASE)
-                    
-                    js_redirect = js_match.group(1) if js_match else (meta_match.group(1) if meta_match else None)
-                    
-                    if js_redirect:
-                        if not js_redirect.startswith('http'):
-                            js_redirect = f"http://{urlparse(current_url).hostname}/{js_redirect.lstrip('/')}"
-                        chain.append(f"⚠️ Client-Side JS Redirect -> {js_redirect}")
-                        current_url = js_redirect
-                        penalty += 0.1
-                        continue
-                except Exception:
-                    pass
                 break
-                
         final_url = current_url
         penalty = min(penalty, 0.3)
     except Exception:
@@ -114,7 +120,6 @@ def trace_redirects(url: str):
     return final_url, chain, penalty
 
 def check_virustotal(url: str):
-    # FIX 4.2: Check Cache First
     if url in VT_CACHE:
         cached_time, cached_result = VT_CACHE[url]
         if time.time() - cached_time < CACHE_TTL:
@@ -132,15 +137,10 @@ def check_virustotal(url: str):
             malicious_count = stats.get('malicious', 0)
             total_engines = malicious_count + stats.get('suspicious', 0) + stats.get('harmless', 0) + stats.get('undetected', 0)
             res = {"malicious": malicious_count, "suspicious": stats.get('suspicious', 0), "total_engines": total_engines, "vt_penalty": min(malicious_count * 0.15, 0.6)}
-            
-            # Save to Cache
             VT_CACHE[url] = (time.time(), res)
             return res
-            
         elif response.status_code == 429:
-            # FIX 4.2: Handle Rate Limiting Gracefully
-            return {"error": "VirusTotal Rate Limit Reached. Wait a minute.", "malicious": 0, "vt_penalty": 0.0}
-            
+            return {"error": "VirusTotal Rate Limit Reached.", "malicious": 0, "vt_penalty": 0.0}
     except Exception:
         pass
     return {"malicious": 0, "suspicious": 0, "total_engines": 70, "vt_penalty": 0.0}
@@ -169,6 +169,7 @@ def analyze_url(url: str):
     override_ml_score = False 
     is_high_reputation = False
     is_established_domain = False
+    network_iocs = {} # NEW: Store IP, SSL, etc.
     
     decoded_url = unquote(url)
     if decoded_url != url:
@@ -185,6 +186,11 @@ def analyze_url(url: str):
     vt_result = check_virustotal(final_url)
     penalty += vt_result.get('vt_penalty', 0.0)
     
+    urlhaus_result = check_urlhaus(final_url) # NEW
+    if urlhaus_result and urlhaus_result.get("status") == "online":
+        heuristics['urlhaus_threat'] = urlhaus_result.get("threat", "Malware")
+        penalty += 0.8 # Instant malicious if URLhaus knows it
+    
     try:
         parsed_url = urlparse(final_url)
         raw_hostname = parsed_url.hostname if parsed_url.hostname else final_url.split('/')[0]
@@ -195,6 +201,15 @@ def analyze_url(url: str):
             decoded_hostname = raw_hostname
             
         normalized_hostname = normalize_homoglyphs(decoded_hostname)
+        hostname = normalized_hostname
+
+        # --- NEW: Extract IP and SSL IOC ---
+        try:
+            ip_addr = socket.gethostbyname(hostname)
+            network_iocs['ip_address'] = ip_addr
+            network_iocs['ssl_cert'] = get_ssl_info(hostname)
+        except Exception:
+            pass
 
         if decoded_hostname != raw_hostname or normalized_hostname != decoded_hostname:
             heuristics['punycode_homoglyph_attack'] = True
@@ -202,22 +217,15 @@ def analyze_url(url: str):
             heuristics['normalized_hostname'] = normalized_hostname
             penalty += 1.0 
 
-        hostname = normalized_hostname
-
         is_ip = False
         try:
             ipaddress.ip_address(hostname)
             is_ip = True
         except ValueError:
             try:
-                if hostname.startswith('0x'):
-                    ipaddress.ip_address(int(hostname, 16))
-                    is_ip = True
-                elif hostname.isdigit():
-                    ipaddress.ip_address(int(hostname))
-                    is_ip = True
-            except ValueError:
-                pass
+                if hostname.startswith('0x'): ipaddress.ip_address(int(hostname, 16)); is_ip = True
+                elif hostname.isdigit(): ipaddress.ip_address(int(hostname)); is_ip = True
+            except ValueError: pass
                 
         if is_ip:
             heuristics['is_ip_address'] = True
@@ -238,12 +246,10 @@ def analyze_url(url: str):
                     now = datetime.now(creation_date.tzinfo) if creation_date.tzinfo else datetime.now()
                     age_days = (now - creation_date).days
                     heuristics['domain_age_days'] = age_days
-                    
                     if age_days > 730 and vt_result.get('malicious', 0) == 0:
                         is_established_domain = True
                         heuristics['dynamic_trust_granted'] = True
-            except Exception:
-                pass
+            except Exception: pass
 
             suspicious_keywords = ['login', 'verify', 'secure', 'account', 'update', 'banking', 'phishing', 'admin', 'auth', 'confirm', 'signin', 'support', 'billing', 'wallet', 'crypto', 'recovery']
             found_in_domain = [kw for kw in suspicious_keywords if kw in domain_name_only]
@@ -253,7 +259,6 @@ def analyze_url(url: str):
                 if found_in_domain:
                     heuristics['suspicious_keywords_in_root'] = found_in_domain
                     penalty += 0.4
-                
                 if found_in_subdomain and domain_name_only not in HIGH_REPUTATION_DOMAINS:
                     heuristics['suspicious_keywords_in_subdomain'] = found_in_subdomain
                     penalty += 0.2
@@ -264,31 +269,18 @@ def analyze_url(url: str):
             if not is_high_reputation and not is_established_domain:
                 if domain_name_only not in popular_brands:
                     for brand in popular_brands:
-                        if fuzz.ratio(domain_name_only, brand) > 80:
-                            typosquatting_target = brand
-                            break
+                        if fuzz.ratio(domain_name_only, brand) > 80: typosquatting_target = brand; break
                         if brand in domain_name_only and len(domain_name_only) > len(brand):
-                            if '-' in domain_name_only or len(domain_name_only) > len(brand) + 3:
-                                typosquatting_target = brand
-                                break
-                        if fuzz.partial_ratio(domain_name_only, brand) > 90:
-                            typosquatting_target = brand
-                            break
-                            
+                            if '-' in domain_name_only or len(domain_name_only) > len(brand) + 3: typosquatting_target = brand; break
+                        if fuzz.partial_ratio(domain_name_only, brand) > 90: typosquatting_target = brand; break
                     if typosquatting_target:
                         heuristics['typosquatting_warning'] = f"Domain mimics brand: '{typosquatting_target}'"
                         penalty += 0.5
 
             if not is_high_reputation and not is_established_domain:
-                if hostname.count('-') > 2:
-                    heuristics['excessive_hyphens'] = True
-                    penalty += 0.2
-                if extracted.suffix.lower() in ['xyz', 'top', 'tk', 'gq', 'cf', 'ml', 'work', 'click']:
-                    heuristics['suspicious_tld'] = extracted.suffix
-                    penalty += 0.3
-                if len(subdomain.split('.')) > 1:
-                    heuristics['deep_subdomains'] = subdomain
-                    penalty += 0.25
+                if hostname.count('-') > 2: heuristics['excessive_hyphens'] = True; penalty += 0.2
+                if extracted.suffix.lower() in ['xyz', 'top', 'tk', 'gq', 'cf', 'ml', 'work', 'click']: heuristics['suspicious_tld'] = extracted.suffix; penalty += 0.3
+                if len(subdomain.split('.')) > 1: heuristics['deep_subdomains'] = subdomain; penalty += 0.25
 
             domain_entropy = calculate_entropy(domain_name_only)
             heuristics['domain_entropy'] = round(domain_entropy, 2)
@@ -298,14 +290,10 @@ def analyze_url(url: str):
                 vowels = sum(1 for c in domain_name_only if c in 'aeiou')
                 vowel_ratio = vowels / len(domain_name_only)
                 is_dga = False
-                if domain_entropy > 3.8:
-                    is_dga = True
+                if domain_entropy > 3.8: is_dga = True
                 elif domain_entropy > 3.3:
-                    if digits >= 2 or vowel_ratio < 0.2:
-                        is_dga = True
-                if is_dga:
-                    heuristics['dga_entropy_warning'] = "Randomly generated domain (DGA) characteristics"
-                    penalty += 0.4
+                    if digits >= 2 or vowel_ratio < 0.2: is_dga = True
+                if is_dga: heuristics['dga_entropy_warning'] = "Randomly generated domain (DGA) characteristics"; penalty += 0.4
 
         if not is_ip:
             try:
@@ -313,8 +301,7 @@ def analyze_url(url: str):
                 heuristics['dns_resolved'] = True
             except socket.gaierror:
                 heuristics['dns_resolved'] = False
-                if not is_high_reputation and not is_established_domain:
-                    penalty += 0.4
+                if not is_high_reputation and not is_established_domain: penalty += 0.4
             
     except Exception as e:
         heuristics['parsing_error'] = str(e)
@@ -340,6 +327,8 @@ def analyze_url(url: str):
             "heuristic_penalty": round(penalty, 3),
             "redirect_chain": redirect_chain,
             "virustotal_stats": vt_result,
+            "urlhaus_stats": urlhaus_result, # NEW
+            "network_iocs": network_iocs,    # NEW
             "checks": heuristics
         }
     }
