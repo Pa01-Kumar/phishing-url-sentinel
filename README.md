@@ -1,82 +1,450 @@
-# 🛡️ Phishing URL Sentinel
 
-A full-stack cybersecurity application that detects phishing URLs using a hybrid approach: Machine Learning and real-time heuristic analysis.
+# Phishing URL Sentinel
 
-## 🚀 Features & How it Works
-1. **Machine Learning:** Analyzes URL character patterns using a Hugging Face Transformer model (`Eason918/malicious-url-detector`).
-2. **Real-Time Heuristics & Threat Intelligence:**
-   * **WHOIS Verification:** Flags domains registered less than 30 days ago.
-   * **DNS Resolution Check:** Flags domains that fail IP resolution.
-   * **Keyword & Subdomain Inspection:** Flags deception patterns (e.g., "login", "verify", "secure", "banking").
-   * **Shannon Entropy Analysis:** Detects algorithmic domain generation (DGA).
-   * **VirusTotal API Integration:** Aggregates real-time threat intelligence from 70+ antivirus engines.
-   * **STIX 2.1 Threat Intel Export:** Generates standardized threat intel bundles for SIEM/SOAR integration.
-3. **Score Fusion:** Combines ML probability with heuristic penalties to output an actionable Risk Score and Verdict (Benign, Suspicious, Malicious).
-4. **Interactive Dashboard:** Live screenshot preview, full redirect tracer, feedback mechanism, and persistent scan history.
+A full-stack cybersecurity application that detects phishing URLs using a hybrid approach combining machine learning, real-time heuristic analysis, and threat intelligence.
 
----
+**Live Demo:** [Phishing URL Sentinel](https://phishing-sentinel-two.vercel.app)
 
-## 🛠️ Tech Stack
-* **Backend:** Python 3.10+, FastAPI, Uvicorn, Hugging Face Transformers, PyTorch (CPU-optimized), SQLite
-* **Frontend:** Responsive HTML5, Tailwind CSS, Vanilla JS
+## Features
 
----
+### 1. Machine Learning Detection
+Analyzes URL character patterns using the Hugging Face Inference API and the `Eason918/malicious-url-detector` model.
 
-## ☁️ Free Cloud Deployment Options
+### 2. Real-Time Heuristic Analysis
 
-### Option 1: Hugging Face Spaces (Recommended for ML)
-Hugging Face Spaces provides a **free 16 GB RAM CPU tier** with no credit card required—ideal for PyTorch and Transformers!
+- **WHOIS Verification:** Flags domains registered less than 30 days ago.
+- **DNS Resolution:** Identifies domains that fail to resolve to an IP address.
+- **Keyword and Subdomain Inspection:** Detects suspicious patterns such as `login`, `verify`, `secure`, and `banking`.
+- **Shannon Entropy Analysis:** Identifies high-entropy domains that may indicate algorithmically generated domain names.
+- **Typosquatting and Homoglyph Detection:** Uses fuzzy matching to identify deceptive domains, such as `paypa1.com`.
 
-1. Go to [Hugging Face Spaces: New Space](https://huggingface.co/new-space).
-2. Enter a **Space name** (e.g., `phishing-url-sentinel`).
-3. Set **License** to `mit` or `apache-2.0`.
-4. Select **Docker** as the Space SDK and choose **Blank**.
-5. Push your repository to your Space:
-   ```bash
-   git remote add space https://huggingface.co/spaces/<your-username>/phishing-url-sentinel
-   git push space main
-   ```
-6. Under **Settings -> Variables and secrets**, add `VIRUSTOTAL_API_KEY` (optional).
-7. Hugging Face automatically builds the container and provides your public HTTPS URL:
-   `https://<your-username>-phishing-url-sentinel.hf.space`
+### 3. Threat Intelligence Integration
 
----
+- **VirusTotal and URLhaus:** Integrates external threat intelligence to identify potentially malicious URLs.
+- **STIX 2.1 Export:** Generates standardized threat intelligence bundles for integration with SIEM and SOAR platforms.
 
-### Option 2: Render.com
-1. Go to the [Render Dashboard](https://dashboard.render.com/) and click **New +** -> **Web Service**.
-2. Connect your GitHub repository `Pa01-Kumar/phishing-url-sentinel`.
-3. Render detects the root `Dockerfile` and `render.yaml` automatically.
-4. Select the **Free** instance type.
-5. In **Environment Variables**, add `VIRUSTOTAL_API_KEY`.
-6. Click **Deploy Web Service** to get a live HTTPS URL (e.g., `https://phishing-url-sentinel.onrender.com`).
+### 4. Risk Scoring and Classification
+Combines machine learning predictions with heuristic penalties to generate a risk score and classify URLs as:
 
----
+- Benign
+- Suspicious
+- Malicious
 
-## 💻 Running Locally
+### 5. Interactive Dashboard
 
-### 1. Using Python
+- Live screenshot preview
+- Redirect tracing
+- User feedback mechanism
+- Persistent scan history
+
+## Tech Stack
+
+| Component | Technologies |
+|---|---|
+| Backend | Python 3.10+, FastAPI, Uvicorn |
+| Frontend | HTML5, Tailwind CSS, Vanilla JavaScript |
+| Database | SQLite |
+| Rate Limiting | SlowAPI |
+| Machine Learning | Hugging Face Inference API |
+| Threat Intelligence | VirusTotal, URLhaus |
+| Deployment | Render, Vercel |
+
+## Getting Started
+
+Follow these instructions to run the application locally.
+
+### Prerequisites
+
+Ensure the following are installed or available:
+
+1. Python 3.10 or later.
+2. A VirusTotal API key. [Get a free API key](https://www.virustotal.com/).
+3. A Hugging Face access token. [Generate a token](https://huggingface.co/settings/tokens).
+
+### Step 1: Clone the Repository
+
+Open a terminal and run:
+
 ```bash
-# Clone the repository
 git clone https://github.com/Pa01-Kumar/phishing-url-sentinel.git
 cd phishing-url-sentinel
-
-# Create and activate virtual environment
-python -m venv venv
-# On Windows: .\venv\Scripts\activate
-# On Mac/Linux: source venv/bin/activate
-
-# Install dependencies
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install -r requirements.txt
-
-# Run unified server
-uvicorn backend.main:app --reload --port 8000
 ```
-Open **http://127.0.0.1:8000** in your browser.
 
-### 2. Using Docker
+### Step 2: Set Up the Backend
+
+Navigate to the backend directory:
+
 ```bash
-docker build -t phishing-sentinel .
-docker run -p 7860:7860 -e VIRUSTOTAL_API_KEY="your_key" phishing-sentinel
+cd backend
 ```
-Open **http://localhost:7860** in your browser.
+
+Create a virtual environment:
+
+```bash
+python -m venv venv
+```
+
+Activate the virtual environment.
+
+**Windows:**
+
+```powershell
+.\venv\Scripts\activate
+```
+
+**macOS / Linux:**
+
+```bash
+source venv/bin/activate
+```
+
+Install the required dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+#### Configure Environment Variables
+
+Create a `.env` file inside the `backend` directory and add your API keys:
+
+```dotenv
+VIRUSTOTAL_API_KEY=your_virustotal_key_here
+HF_TOKEN=hf_your_huggingface_token_here
+```
+
+Replace the placeholder values with your actual API keys.
+
+**Security:** Never commit your `.env` file or expose API keys in your source code.
+
+#### Start the Backend Server
+
+Run the following command from the `backend` directory:
+
+```bash
+uvicorn main:app --reload
+```
+
+The backend API will start locally with automatic reloading enabled.
+
+### Step 3: Set Up the Frontend
+
+Open a new terminal window and navigate to the root directory of the project.
+
+Start the frontend development server:
+
+```bash
+python -m http.server 8080 --directory frontend
+```
+
+Open your browser and visit:
+
+[http://localhost:8080](http://localhost:8080)
+
+The application is now available for local testing.
+
+## VS Code: Selecting the Python Interpreter
+
+If VS Code displays yellow warning lines under your Python imports, make sure the correct virtual environment is selected.
+
+1. Press `Ctrl + Shift + P` on Windows/Linux or `Cmd + Shift + P` on macOS.
+2. Search for `Python: Select Interpreter`.
+3. Select the Python interpreter associated with your project's `venv` environment.
+
+This allows VS Code to recognize the dependencies installed in your virtual environment.
+
+## Deployment
+
+The application uses a separate backend and frontend deployment to support free-tier hosting.
+
+### Backend — Render
+
+Configure the Render service with the following settings:
+
+| Setting | Value |
+|---|---|
+| Root Directory | `backend` |
+| Build Command | `pip install -r requirements.txt` |
+| Start Command | `uvicorn main:app --host 0.0.0.0 --port $PORT` |
+
+Add the following environment variables through the Render Dashboard:
+
+```dotenv
+VIRUSTOTAL_API_KEY=your_virustotal_key_here
+HF_TOKEN=hf_your_huggingface_token_here
+```
+
+### Frontend — Vercel
+
+Configure the Vercel project with:
+
+| Setting | Value |
+|---|---|
+| Root Directory | `frontend` |
+
+Ensure the frontend is configured to communicate with the deployed backend API.
+
+## Security Architecture
+
+### SSRF Protection
+Blocks requests to internal IP addresses and cloud metadata endpoints to reduce the risk of Server-Side Request Forgery (SSRF).
+
+### Rate Limiting
+Limits scans to a maximum of five requests per minute per IP address to help prevent API quota exhaustion.
+
+### Secret Management
+API keys are stored in environment variables and excluded from version control.
+
+## Project Structure
+
+```text
+phishing-url-sentinel/
+├── backend/
+│   ├── main.py
+│   ├── requirements.txt
+│   └── .env
+├── frontend/
+│   └── index.html
+├── .gitignore
+└── README.md
+```
+
+The structure above illustrates the main project components. The exact file structure may vary depending on your implementation.
+
+## Contributing
+
+Contributions, bug reports, and feature suggestions are welcome.
+
+1. Fork the repository.
+2. Create a new branch for your changes.
+3. Commit your changes with a descriptive message.
+4. Open a pull request.
+
+## License
+
+A license has not yet been specified. Add a `LICENSE` file to clarify the terms under which this project may be used, modified, and distributed.
+
+# Phishing URL Sentinel
+
+A full-stack cybersecurity application that detects phishing URLs using a hybrid approach combining machine learning, real-time heuristic analysis, and threat intelligence.
+
+**Live Demo:** [Phishing URL Sentinel](https://phishing-sentinel-two.vercel.app)
+
+## Features
+
+### 1. Machine Learning Detection
+Analyzes URL character patterns using the Hugging Face Inference API and the `Eason918/malicious-url-detector` model.
+
+### 2. Real-Time Heuristic Analysis
+
+- **WHOIS Verification:** Flags domains registered less than 30 days ago.
+- **DNS Resolution:** Identifies domains that fail to resolve to an IP address.
+- **Keyword and Subdomain Inspection:** Detects suspicious patterns such as `login`, `verify`, `secure`, and `banking`.
+- **Shannon Entropy Analysis:** Identifies high-entropy domains that may indicate algorithmically generated domain names.
+- **Typosquatting and Homoglyph Detection:** Uses fuzzy matching to identify deceptive domains, such as `paypa1.com`.
+
+### 3. Threat Intelligence Integration
+
+- **VirusTotal and URLhaus:** Integrates external threat intelligence to identify potentially malicious URLs.
+- **STIX 2.1 Export:** Generates standardized threat intelligence bundles for integration with SIEM and SOAR platforms.
+
+### 4. Risk Scoring and Classification
+Combines machine learning predictions with heuristic penalties to generate a risk score and classify URLs as:
+
+- Benign
+- Suspicious
+- Malicious
+
+### 5. Interactive Dashboard
+
+- Live screenshot preview
+- Redirect tracing
+- User feedback mechanism
+- Persistent scan history
+
+## Tech Stack
+
+| Component | Technologies |
+|---|---|
+| Backend | Python 3.10+, FastAPI, Uvicorn |
+| Frontend | HTML5, Tailwind CSS, Vanilla JavaScript |
+| Database | SQLite |
+| Rate Limiting | SlowAPI |
+| Machine Learning | Hugging Face Inference API |
+| Threat Intelligence | VirusTotal, URLhaus |
+| Deployment | Render, Vercel |
+
+## Getting Started
+
+Follow these instructions to run the application locally.
+
+### Prerequisites
+
+Ensure the following are installed or available:
+
+1. Python 3.10 or later.
+2. A VirusTotal API key. [Get a free API key](https://www.virustotal.com/).
+3. A Hugging Face access token. [Generate a token](https://huggingface.co/settings/tokens).
+
+### Step 1: Clone the Repository
+
+Open a terminal and run:
+
+```bash
+git clone https://github.com/Pa01-Kumar/phishing-url-sentinel.git
+cd phishing-url-sentinel
+```
+
+### Step 2: Set Up the Backend
+
+Navigate to the backend directory:
+
+```bash
+cd backend
+```
+
+Create a virtual environment:
+
+```bash
+python -m venv venv
+```
+
+Activate the virtual environment.
+
+**Windows:**
+
+```powershell
+.\venv\Scripts\activate
+```
+
+**macOS / Linux:**
+
+```bash
+source venv/bin/activate
+```
+
+Install the required dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+#### Configure Environment Variables
+
+Create a `.env` file inside the `backend` directory and add your API keys:
+
+```dotenv
+VIRUSTOTAL_API_KEY=your_virustotal_key_here
+HF_TOKEN=hf_your_huggingface_token_here
+```
+
+Replace the placeholder values with your actual API keys.
+
+**Security:** Never commit your `.env` file or expose API keys in your source code.
+
+#### Start the Backend Server
+
+Run the following command from the `backend` directory:
+
+```bash
+uvicorn main:app --reload
+```
+
+The backend API will start locally with automatic reloading enabled.
+
+### Step 3: Set Up the Frontend
+
+Open a new terminal window and navigate to the root directory of the project.
+
+Start the frontend development server:
+
+```bash
+python -m http.server 8080 --directory frontend
+```
+
+Open your browser and visit:
+
+[http://localhost:8080](http://localhost:8080)
+
+The application is now available for local testing.
+
+## VS Code: Selecting the Python Interpreter
+
+If VS Code displays yellow warning lines under your Python imports, make sure the correct virtual environment is selected.
+
+1. Press `Ctrl + Shift + P` on Windows/Linux or `Cmd + Shift + P` on macOS.
+2. Search for `Python: Select Interpreter`.
+3. Select the Python interpreter associated with your project's `venv` environment.
+
+This allows VS Code to recognize the dependencies installed in your virtual environment.
+
+## Deployment
+
+The application uses a separate backend and frontend deployment to support free-tier hosting.
+
+### Backend — Render
+
+Configure the Render service with the following settings:
+
+| Setting | Value |
+|---|---|
+| Root Directory | `backend` |
+| Build Command | `pip install -r requirements.txt` |
+| Start Command | `uvicorn main:app --host 0.0.0.0 --port $PORT` |
+
+Add the following environment variables through the Render Dashboard:
+
+```dotenv
+VIRUSTOTAL_API_KEY=your_virustotal_key_here
+HF_TOKEN=hf_your_huggingface_token_here
+```
+
+### Frontend — Vercel
+
+Configure the Vercel project with:
+
+| Setting | Value |
+|---|---|
+| Root Directory | `frontend` |
+
+Ensure the frontend is configured to communicate with the deployed backend API.
+
+## Security Architecture
+
+### SSRF Protection
+Blocks requests to internal IP addresses and cloud metadata endpoints to reduce the risk of Server-Side Request Forgery (SSRF).
+
+### Rate Limiting
+Limits scans to a maximum of five requests per minute per IP address to help prevent API quota exhaustion.
+
+### Secret Management
+API keys are stored in environment variables and excluded from version control.
+
+## Project Structure
+
+```text
+phishing-url-sentinel/
+├── backend/
+│   ├── main.py
+│   ├── requirements.txt
+│   └── .env
+├── frontend/
+│   └── index.html
+├── .gitignore
+└── README.md
+```
+
+The structure above illustrates the main project components. The exact file structure may vary depending on your implementation.
+
+## Contributing
+
+Contributions, bug reports, and feature suggestions are welcome.
+
+1. Fork the repository.
+2. Create a new branch for your changes.
+3. Commit your changes with a descriptive message.
+4. Open a pull request.
+
+## License
+
+A license has not yet been specified. Add a `LICENSE` file to clarify the terms under which this project may be used, modified, and distributed.
