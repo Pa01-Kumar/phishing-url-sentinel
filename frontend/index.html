@@ -103,7 +103,7 @@
         // Dynamic API Base URL: works seamlessly whether hosted together (Render, Hugging Face, etc.) or standalone
         const API_BASE = (window.location.protocol.startsWith('http') && !['8080', '5500', '3000'].includes(window.location.port))
             ? ''
-            : 'http://127.0.0.1:8000';
+            : 'https://phishing-url-sentinel-1.onrender.com';
 
         function validateAndFormatURL(input) {
             let urlToScan = input.trim();
