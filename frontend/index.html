@@ -101,10 +101,8 @@
         let currentScanData = null;
 
         // Dynamic API Base URL: works seamlessly whether hosted together (Render, Hugging Face, etc.) or standalone
-        const API_BASE = (window.location.protocol.startsWith('http') && !['8080', '5500', '3000'].includes(window.location.port))
-            ? ''
-            : 'https://phishing-url-sentinel-1.onrender.com';
-
+        const API_BASE = 'https://phishing-url-sentinel-1.onrender.com';
+        
         function validateAndFormatURL(input) {
             let urlToScan = input.trim();
             if (!urlToScan) return null;
