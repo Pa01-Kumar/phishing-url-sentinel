@@ -1,17 +1,13 @@
-import os
-import uuid
-from datetime import datetime
-from contextlib import asynccontextmanager
-
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 import validators
+import uuid
+from datetime import datetime
+from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-
+from contextlib import asynccontextmanager
 from detector import analyze_url
 import database
 
@@ -34,19 +30,18 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS Configuration
+origins = [
+    "http://localhost:8080",
+    "https://phishing-sentinel-two.vercel.app"  # <-- Must be here!
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=False,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
-
-# Resolve path to frontend directory
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FRONTEND_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "frontend"))
-if not os.path.exists(FRONTEND_DIR):
-    FRONTEND_DIR = os.path.abspath(os.path.join(BASE_DIR, "frontend"))
 
 class URLRequest(BaseModel):
     url: str
@@ -60,21 +55,11 @@ class URLRequest(BaseModel):
             raise ValueError("Invalid URL format. Must start with http:// or https://")
         return v
 
-class FeedbackRequest(BaseModel):
-    scan_id: int
-    feedback: str
-
 @app.get("/")
 def read_root():
-    index_path = os.path.join(FRONTEND_DIR, "index.html")
-    if os.path.exists(index_path):
-        return FileResponse(index_path)
     return {"message": "Phishing Sentinel API is running!"}
 
-@app.get("/api/health")
-def health_check():
-    return {"status": "healthy", "service": "Phishing URL Sentinel"}
-
+# FIXED: Changed to 'def' to prevent Event Loop Starvation
 @app.post("/scan")
 @limiter.limit("5/minute") 
 def scan_url(request: Request, url_request: URLRequest):
@@ -82,11 +67,14 @@ def scan_url(request: Request, url_request: URLRequest):
     database.save_scan(result["url"], result["risk_score"], result["verdict"])
     return result
 
-# STIX 2.1 Threat Intel Export
+# NEW: STIX 2.1 Threat Intel Export
 @app.post("/scan/stix")
 @limiter.limit("5/minute") 
 def scan_url_stix(request: Request, url_request: URLRequest):
+    # Run the normal scan first
     result = analyze_url(url_request.url)
+    
+    # Format into STIX 2.1 Bundle
     stix_bundle = {
         "type": "bundle",
         "id": f"bundle--{uuid.uuid4()}",
@@ -109,21 +97,29 @@ def scan_url_stix(request: Request, url_request: URLRequest):
     }
     return stix_bundle
 
-@app.post("/feedback")
-def submit_feedback(fb: FeedbackRequest):
-    database.update_feedback(fb.scan_id, fb.feedback)
-    return {"message": "Feedback submitted successfully"}
-
 @app.get("/history")
 def get_scan_history():
     return database.get_history()
 
+# FIXED: Clear history route is separate and correct
 @app.delete("/history")
 def clear_scan_history():
     database.clear_history()
     return {"message": "History cleared successfully"}
 
+# FIXED: Single scan delete route is separate and correct
 @app.delete("/history/{scan_id}")
 def delete_single_scan(scan_id: int):
     database.delete_scan(scan_id)
     return {"message": f"Scan {scan_id} deleted successfully"}
+
+from pydantic import BaseModel
+
+class FeedbackRequest(BaseModel):
+    scan_id: int
+    feedback: str # 'true_positive' or 'false_positive'
+
+@app.post("/feedback")
+def submit_feedback(feedback_req: FeedbackRequest):
+    database.update_feedback(feedback_req.scan_id, feedback_req.feedback)
+    return {"message": "Feedback recorded successfully"}
