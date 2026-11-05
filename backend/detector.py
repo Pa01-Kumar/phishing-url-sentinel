@@ -1,30 +1,26 @@
-import mmh3
-import requests
-from bs4 import BeautifulSoup
 import os
 import re
 import math
 import base64
 import socket
-import ssl  # NEW: For SSL extraction
+import ssl
 import ipaddress
 import requests
 import tldextract
 import whois
 import idna
 import time
+import mmh3
 from collections import Counter
 from datetime import datetime
-from transformers import pipeline
+from bs4 import BeautifulSoup
 from urllib.parse import urlparse, unquote
 from dotenv import load_dotenv
 from rapidfuzz import fuzz
 
 load_dotenv()
 VT_API_KEY = os.getenv("VIRUSTOTAL_API_KEY")
-
-print("Loading ML Model...")
-classifier = pipeline("text-classification", model="Eason918/malicious-url-detector")
+HF_TOKEN = os.getenv("HF_TOKEN")
 
 BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -46,6 +42,25 @@ HIGH_REPUTATION_DOMAINS = {
     'gov', 'mil', 'edu'
 }
 
+def check_hf_model(url: str):
+    """Calls the Hugging Face Inference API instead of running PyTorch locally."""
+    if not HF_TOKEN:
+        return 0.5 
+    
+    api_url = "https://api-inference.huggingface.co/models/Eason918/malicious-url-detector"
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    payload = {"inputs": url}
+    
+    try:
+        response = requests.post(api_url, headers=headers, json=payload, timeout=12)
+        if response.status_code == 200:
+            result = response.json()[0]
+            is_ml_malicious = result['label'] == 'LABEL_1'
+            return result['score'] if is_ml_malicious else (1 - result['score'])
+    except Exception:
+        pass
+    return 0.1 
+
 def is_safe_url(url: str) -> bool:
     try:
         parsed = urlparse(url)
@@ -61,7 +76,6 @@ def is_safe_url(url: str) -> bool:
     except Exception:
         return False
 
-# --- NEW: SSL Extraction ---
 def get_ssl_info(hostname: str):
     try:
         context = ssl.create_default_context()
@@ -76,7 +90,22 @@ def get_ssl_info(hostname: str):
     except Exception:
         return None
 
-# --- NEW: URLhaus Integration ---
+def get_ip_info(ip_addr: str):
+    try:
+        response = requests.get(f"http://ip-api.com/json/{ip_addr}?fields=status,country,city,isp,org,as", timeout=3)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("status") == "success":
+                return {
+                    "country": data.get("country"),
+                    "city": data.get("city"),
+                    "isp": data.get("isp"),
+                    "asn": data.get("as")
+                }
+    except Exception:
+        pass
+    return None
+
 def check_urlhaus(url: str):
     try:
         response = requests.post("https://urlhaus-api.abuse.ch/v1/url/", data={"url": url}, timeout=5)
@@ -128,7 +157,7 @@ def check_virustotal(url: str):
         if time.time() - cached_time < CACHE_TTL:
             return cached_result
 
-    if not VT_API_KEY or VT_API_KEY == "your_long_api_key_here":
+    if not VT_API_KEY:
         return {"error": "VirusTotal API key not configured.", "malicious": 0, "vt_penalty": 0.0}
     
     headers = {"x-apikey": VT_API_KEY, **BROWSER_HEADERS}
@@ -165,6 +194,7 @@ def normalize_homoglyphs(text: str) -> str:
         'Μ': 'M', 'Ν': 'N', 'Ο': 'O', 'Ρ': 'P', 'Τ': 'T', 'Υ': 'Y', 'Χ': 'X'
     }
     return ''.join(homoglyphs.get(c, c) for c in text)
+
 def get_favicon_hash(url: str):
     try:
         response = requests.get(url, timeout=3, headers=BROWSER_HEADERS)
@@ -186,7 +216,7 @@ def analyze_url(url: str):
     override_ml_score = False 
     is_high_reputation = False
     is_established_domain = False
-    network_iocs = {} # NEW: Store IP, SSL, etc.
+    network_iocs = {}
     
     decoded_url = unquote(url)
     if decoded_url != url:
@@ -196,17 +226,15 @@ def analyze_url(url: str):
     final_url, redirect_chain, redirect_penalty = trace_redirects(decoded_url)
     penalty += redirect_penalty
     
-    ml_result = classifier(final_url)[0]
-    is_ml_malicious = ml_result['label'] == 'LABEL_1'
-    ml_score = ml_result['score'] if is_ml_malicious else (1 - ml_result['score'])
+    ml_score = check_hf_model(final_url)
     
     vt_result = check_virustotal(final_url)
     penalty += vt_result.get('vt_penalty', 0.0)
     
-    urlhaus_result = check_urlhaus(final_url) # NEW
+    urlhaus_result = check_urlhaus(final_url)
     if urlhaus_result and urlhaus_result.get("status") == "online":
         heuristics['urlhaus_threat'] = urlhaus_result.get("threat", "Malware")
-        penalty += 0.8 # Instant malicious if URLhaus knows it
+        penalty += 0.8
     
     try:
         parsed_url = urlparse(final_url)
@@ -220,12 +248,16 @@ def analyze_url(url: str):
         normalized_hostname = normalize_homoglyphs(decoded_hostname)
         hostname = normalized_hostname
 
-        # --- NEW: Extract IP and SSL IOC ---
         try:
             ip_addr = socket.gethostbyname(hostname)
             network_iocs['ip_address'] = ip_addr
             network_iocs['ssl_cert'] = get_ssl_info(hostname)
-            network_iocs['favicon_hash'] = get_favicon_hash(final_url)        
+            network_iocs['favicon_hash'] = get_favicon_hash(final_url)
+            
+            ip_info = get_ip_info(ip_addr)
+            if ip_info:
+                network_iocs['asn_geoip'] = ip_info
+                
         except Exception:
             pass
 
@@ -284,16 +316,15 @@ def analyze_url(url: str):
             popular_brands = list(HIGH_REPUTATION_DOMAINS)
             typosquatting_target = None
             
-            if not is_high_reputation and not is_established_domain:
-                if domain_name_only not in popular_brands:
-                    for brand in popular_brands:
-                        if fuzz.ratio(domain_name_only, brand) > 80: typosquatting_target = brand; break
-                        if brand in domain_name_only and len(domain_name_only) > len(brand):
-                            if '-' in domain_name_only or len(domain_name_only) > len(brand) + 3: typosquatting_target = brand; break
-                        if fuzz.partial_ratio(domain_name_only, brand) > 90: typosquatting_target = brand; break
-                    if typosquatting_target:
-                        heuristics['typosquatting_warning'] = f"Domain mimics brand: '{typosquatting_target}'"
-                        penalty += 0.5
+            if domain_name_only not in popular_brands:
+                for brand in popular_brands:
+                    if fuzz.ratio(domain_name_only, brand) > 80: typosquatting_target = brand; break
+                    if brand in domain_name_only and len(domain_name_only) > len(brand):
+                        if '-' in domain_name_only or len(domain_name_only) > len(brand) + 3: typosquatting_target = brand; break
+                    if fuzz.partial_ratio(domain_name_only, brand) > 90: typosquatting_target = brand; break
+                if typosquatting_target:
+                    heuristics['typosquatting_warning'] = f"Domain mimics brand: '{typosquatting_target}'"
+                    penalty += 0.6
 
             if not is_high_reputation and not is_established_domain:
                 if hostname.count('-') > 2: heuristics['excessive_hyphens'] = True; penalty += 0.2
@@ -345,8 +376,8 @@ def analyze_url(url: str):
             "heuristic_penalty": round(penalty, 3),
             "redirect_chain": redirect_chain,
             "virustotal_stats": vt_result,
-            "urlhaus_stats": urlhaus_result, # NEW
-            "network_iocs": network_iocs,    # NEW
+            "urlhaus_stats": urlhaus_result,
+            "network_iocs": network_iocs,
             "checks": heuristics
         }
     }
