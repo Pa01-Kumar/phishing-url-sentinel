@@ -34,7 +34,9 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # CORS Configuration
 origins = [
     "http://localhost:8080",
-    "https://phishing-sentinel-two.vercel.app"  # <-- Must be here!
+    "http://127.0.0.1:8080",
+    "https://phishing-sentinel-two.vercel.app",
+    "https://phishing-sentinel-gtbph3jrt-pa1kumar7668-7647.vercel.app"  # <-- ADD THIS
 ]
 
 app.add_middleware(
