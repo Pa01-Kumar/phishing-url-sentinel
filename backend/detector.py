@@ -21,6 +21,7 @@ from rapidfuzz import fuzz
 load_dotenv()
 VT_API_KEY = os.getenv("VIRUSTOTAL_API_KEY")
 HF_TOKEN = os.getenv("HF_TOKEN")
+ABUSE_API_KEY = os.getenv("ABUSEIPDB_API_KEY") # NEW
 
 BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -43,7 +44,6 @@ HIGH_REPUTATION_DOMAINS = {
 }
 
 def check_hf_model(url: str):
-    """Calls the Hugging Face Inference API instead of running PyTorch locally."""
     if not HF_TOKEN:
         return 0.5 
     
@@ -106,6 +106,25 @@ def get_ip_info(ip_addr: str):
         pass
     return None
 
+# --- NEW: AbuseIPDB Check ---
+def check_ip_reputation(ip_address: str):
+    if not ABUSE_API_KEY:
+        return None
+    try:
+        url = f"https://api.abuseipdb.com/api/v2/check?ipAddress={ip_address}&maxAgeInDays=90"
+        headers = {"Key": ABUSE_API_KEY, "Accept": "application/json"}
+        response = requests.get(url, headers=headers, timeout=5)
+        if response.status_code == 200:
+            data = response.json()["data"]
+            return {
+                "abuse_confidence_score": data.get("abuseConfidenceScore", 0),
+                "country": data.get("countryCode", "Unknown"),
+                "isp": data.get("isp", "Unknown")
+            }
+    except Exception:
+        pass
+    return None
+
 def check_urlhaus(url: str):
     try:
         response = requests.post("https://urlhaus-api.abuse.ch/v1/url/", data={"url": url}, timeout=5)
@@ -121,10 +140,11 @@ def trace_redirects(url: str):
     chain = [url]
     penalty = 0.0
     final_url = url
+    extra_heuristics = {} # NEW: To pass back AiTM detection data
     
     if not is_safe_url(url):
         chain.append("⛔ Blocked: URL points to a private/internal network (SSRF Protection).")
-        return final_url, chain, 1.0
+        return final_url, chain, 1.0, extra_heuristics
 
     try:
         current_url = url
@@ -139,17 +159,44 @@ def trace_redirects(url: str):
                     next_url = f"{parsed_current.scheme}://{parsed_current.netloc}{next_url}"
                 if not is_safe_url(next_url):
                     chain.append("⛔ Blocked: Redirect target points to internal network.")
-                    return current_url, chain, 1.0
+                    return current_url, chain, 1.0, extra_heuristics
                 chain.append(next_url)
                 current_url = next_url
                 penalty += 0.1
             else:
+                # --- HTML Parsing for JS Redirects & AiTM ---
+                try:
+                    html_content = response.text[:5000]
+                    html_lower = html_content.lower()
+                    
+                    # 1. JS Redirect Check
+                    js_match = re.search(r'(?:window\.location|document\.location|location\.href)\s*=\s*[\'"]([^\'"]+)[\'"]', html_content)
+                    meta_match = re.search(r'<meta[^>]+http-equiv=[\'"]?refresh[\'"]?[^>]+url=([^\'">]+)', html_content, re.IGNORECASE)
+                    
+                    js_redirect = js_match.group(1) if js_match else (meta_match.group(1) if meta_match else None)
+                    
+                    if js_redirect:
+                        if not js_redirect.startswith('http'):
+                            js_redirect = f"http://{urlparse(current_url).hostname}/{js_redirect.lstrip('/')}"
+                        chain.append(f"⚠️ Client-Side JS Redirect -> {js_redirect}")
+                        current_url = js_redirect
+                        penalty += 0.1
+                        continue
+                    
+                    # 2. NEW: AiTM / Browser-in-the-Browser (BiTB) Detection
+                    if '<iframe' in html_lower:
+                        if 'width:100%' in html_lower or 'height:100vh' in html_lower or 'position:fixed' in html_lower or 'width: 100%' in html_lower or 'height: 100vh' in html_lower or 'position: fixed' in html_lower:
+                            extra_heuristics['aitm_browser_in_browser'] = "Suspicious full-screen iframe detected (Possible AiTM/BiTB)"
+                            penalty += 0.5
+                            
+                except Exception:
+                    pass
                 break
         final_url = current_url
-        penalty = min(penalty, 0.3)
+        penalty = min(penalty, 0.8) # Increased max penalty to allow AiTM to register
     except Exception:
         pass
-    return final_url, chain, penalty
+    return final_url, chain, penalty, extra_heuristics
 
 def check_virustotal(url: str):
     if url in VT_CACHE:
@@ -223,8 +270,9 @@ def analyze_url(url: str):
         heuristics['percent_encoding_detected'] = True
         penalty += 0.2
 
-    final_url, redirect_chain, redirect_penalty = trace_redirects(decoded_url)
+    final_url, redirect_chain, redirect_penalty, redirect_heuristics = trace_redirects(decoded_url)
     penalty += redirect_penalty
+    heuristics.update(redirect_heuristics) # Adds the AiTM warning to the final output
     
     ml_score = check_hf_model(final_url)
     
@@ -257,6 +305,14 @@ def analyze_url(url: str):
             ip_info = get_ip_info(ip_addr)
             if ip_info:
                 network_iocs['asn_geoip'] = ip_info
+                
+            # NEW: Check AbuseIPDB Reputation
+            abuse_info = check_ip_reputation(ip_addr)
+            if abuse_info:
+                network_iocs['abuseipdb'] = abuse_info
+                if abuse_info['abuse_confidence_score'] > 50:
+                    heuristics['malicious_ip_reputation'] = f"IP has a {abuse_info['abuse_confidence_score']}% abuse score"
+                    penalty += 0.6
                 
         except Exception:
             pass

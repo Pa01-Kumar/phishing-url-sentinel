@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, File, UploadFile
 from pydantic import BaseModel, field_validator
 import validators
 import uuid
@@ -10,6 +10,8 @@ from slowapi.errors import RateLimitExceeded
 from contextlib import asynccontextmanager
 from detector import analyze_url
 import database
+import cv2
+import numpy as np
 
 # Initialize the database when the server starts
 @asynccontextmanager
@@ -123,3 +125,33 @@ class FeedbackRequest(BaseModel):
 def submit_feedback(feedback_req: FeedbackRequest):
     database.update_feedback(feedback_req.scan_id, feedback_req.feedback)
     return {"message": "Feedback recorded successfully"}
+
+@app.post("/scan_qr")
+async def scan_qr_code(file: UploadFile = File(...)):
+    try:
+        # Read the uploaded image into a NumPy array for OpenCV
+        image_bytes = await file.read()
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        if img is None:
+            return {"error": "Could not read the image file."}
+
+        # Use OpenCV's built-in QRCodeDetector
+        detector = cv2.QRCodeDetector()
+        qr_url, _, _ = detector.detectAndDecode(img)
+        
+        if not qr_url:
+            return {"error": "No QR code found in the image."}
+            
+        # If it's a valid URL, run it through the detection engine!
+        if not qr_url.startswith('http'):
+            qr_url = 'http://' + qr_url
+            
+        result = analyze_url(qr_url)
+        database.save_scan(result["url"], result["risk_score"], result["verdict"])
+        
+        return result
+        
+    except Exception as e:
+        return {"error": str(e)}

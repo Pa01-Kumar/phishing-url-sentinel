@@ -24,6 +24,13 @@
                 Scan
             </button>
         </div>
+                <!-- QR Code Scanner (Quishing) -->
+        <div class="flex justify-center mb-8">
+            <label class="cursor-pointer bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg transition-colors flex items-center gap-2 shadow-lg">
+                <span>📸 Upload QR Code (Quishing)</span>
+                <input type="file" id="qrInput" accept="image/*" class="hidden" onchange="scanQRCode()">
+            </label>
+        </div>
 
         <!-- Loading Spinner -->
         <div id="loading" class="hidden text-center text-blue-400 mb-8 animate-pulse">
@@ -101,7 +108,7 @@
         let currentScanData = null;
 
         // Dynamic API Base URL: works seamlessly whether hosted together (Render, Hugging Face, etc.) or standalone
-        const API_BASE = 'https://phishing-url-sentinel-1.onrender.com';
+        const API_BASE = 'http://127.0.0.1:8000';
         
         function validateAndFormatURL(input) {
             let urlToScan = input.trim();
@@ -220,10 +227,11 @@
                 redirectContainer.classList.add('hidden');
             }
 
-            // Detection Details & VirusTotal
+            // Detection Details
             const detailsList = document.getElementById('detailsList');
             detailsList.innerHTML = ''; 
             
+            // 1. VirusTotal
             if (data.details.virustotal_stats) {
                 const vt = data.details.virustotal_stats;
                 const vtLi = document.createElement('li');
@@ -237,15 +245,26 @@
                 detailsList.appendChild(vtLi);
             }
 
-            // URLhaus
+            // 2. URLhaus
             if (data.details.urlhaus_stats && data.details.urlhaus_stats.status === 'online') {
                 const uLi = document.createElement('li');
                 uLi.className = "border-b border-gray-700 pb-2 mb-2 font-bold text-red-400";
                 uLi.innerHTML = `<span class="text-blue-400">URLhaus:</span> <span class="text-red-400">Known Malware (${data.details.urlhaus_stats.threat})</span>`;
                 detailsList.appendChild(uLi);
             }
+
+            // 3. NEW: AbuseIPDB / Network IOCs
+            if (data.details.network_iocs && data.details.network_iocs.abuseipdb) {
+                const iocs = data.details.network_iocs;
+                const abuseLi = document.createElement('li');
+                abuseLi.className = "border-b border-gray-700 pb-2 mb-2 font-bold";
+                const score = iocs.abuseipdb.abuse_confidence_score;
+                const color = score > 50 ? "text-red-400" : (score > 0 ? "text-yellow-400" : "text-green-400");
+                abuseLi.innerHTML = `<span class="text-blue-400">AbuseIPDB:</span> <span class="${color}">${score}% Abuse Score</span> <span class="text-gray-400">(ISP: ${iocs.abuseipdb.isp})</span>`;
+                detailsList.appendChild(abuseLi);
+            }
             
-            // Heuristics
+            // 4. Heuristics
             const checks = data.details.checks;
             for (const [key, value] of Object.entries(checks)) {
                 const li = document.createElement('li');
@@ -376,6 +395,43 @@
                 }
             } catch (error) {
                 console.error("Failed to submit feedback", error);
+            }
+        }
+        async function scanQRCode() {
+            const fileInput = document.getElementById('qrInput');
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            // UI Updates
+            document.getElementById('scanBtn').disabled = true;
+            document.getElementById('scanBtn').innerText = 'Scanning...';
+            document.getElementById('loading').classList.remove('hidden');
+            document.getElementById('resultContainer').classList.add('hidden');
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch(`${API_BASE}/scan_qr`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) throw new Error("Failed to scan QR code.");
+                const data = await response.json();
+                
+                if (data.error) {
+                    alert(data.error);
+                } else {
+                    displayResult(data);
+                }
+            } catch (error) {
+                alert(error.message);
+            } finally {
+                document.getElementById('scanBtn').disabled = false;
+                document.getElementById('scanBtn').innerText = 'Scan';
+                document.getElementById('loading').classList.add('hidden');
+                fileInput.value = ''; // Clear file input
             }
         }
 
