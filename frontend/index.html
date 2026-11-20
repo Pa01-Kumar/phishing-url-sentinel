@@ -168,11 +168,13 @@
             document.getElementById('resultContainer').classList.remove('hidden');
             document.getElementById('resultUrl').innerText = data.url;
             
+            // 1. Risk Score
             const score = data.risk_score;
             document.getElementById('riskScoreText').innerText = (score * 100).toFixed(1) + '%';
             const riskBar = document.getElementById('riskBar');
             riskBar.style.width = (score * 100) + '%';
 
+            // 2. Verdict Badge
             const badge = document.getElementById('verdictBadge');
             badge.innerText = data.verdict.toUpperCase();
             badge.className = "px-4 py-1 rounded-full font-bold text-sm ";
@@ -188,7 +190,7 @@
                 badge.className += "bg-green-500 text-white";
             }
 
-            // Website Screenshot (Sanitized URL)
+            // 3. Website Screenshot
             const screenshotContainer = document.getElementById('screenshotContainer');
             const websiteImage = document.getElementById('websiteImage');
             const imageLoading = document.getElementById('imageLoading');
@@ -211,7 +213,7 @@
                 screenshotContainer.classList.add('hidden');
             }
 
-            // Redirect Chain
+            // 4. Redirect Chain
             const redirectContainer = document.getElementById('redirectContainer');
             const redirectList = document.getElementById('redirectList');
             redirectList.innerHTML = '';
@@ -227,11 +229,11 @@
                 redirectContainer.classList.add('hidden');
             }
 
-            // Detection Details
+            // 5. Detection Details
             const detailsList = document.getElementById('detailsList');
             detailsList.innerHTML = ''; 
             
-            // 1. VirusTotal
+            // --- VirusTotal ---
             if (data.details.virustotal_stats) {
                 const vt = data.details.virustotal_stats;
                 const vtLi = document.createElement('li');
@@ -245,7 +247,7 @@
                 detailsList.appendChild(vtLi);
             }
 
-            // 2. URLhaus
+            // --- URLhaus ---
             if (data.details.urlhaus_stats && data.details.urlhaus_stats.status === 'online') {
                 const uLi = document.createElement('li');
                 uLi.className = "border-b border-gray-700 pb-2 mb-2 font-bold text-red-400";
@@ -253,18 +255,18 @@
                 detailsList.appendChild(uLi);
             }
 
-            // 3. NEW: AbuseIPDB / Network IOCs
+            // --- AbuseIPDB ---
             if (data.details.network_iocs && data.details.network_iocs.abuseipdb) {
                 const iocs = data.details.network_iocs;
                 const abuseLi = document.createElement('li');
                 abuseLi.className = "border-b border-gray-700 pb-2 mb-2 font-bold";
-                const score = iocs.abuseipdb.abuse_confidence_score;
-                const color = score > 50 ? "text-red-400" : (score > 0 ? "text-yellow-400" : "text-green-400");
-                abuseLi.innerHTML = `<span class="text-blue-400">AbuseIPDB:</span> <span class="${color}">${score}% Abuse Score</span> <span class="text-gray-400">(ISP: ${iocs.abuseipdb.isp})</span>`;
+                const abuseScore = iocs.abuseipdb.abuse_confidence_score;
+                const color = abuseScore > 50 ? "text-red-400" : (abuseScore > 0 ? "text-yellow-400" : "text-green-400");
+                abuseLi.innerHTML = `<span class="text-blue-400">AbuseIPDB:</span> <span class="${color}">${abuseScore}% Abuse Score</span> <span class="text-gray-400">(ISP: ${iocs.abuseipdb.isp})</span>`;
                 detailsList.appendChild(abuseLi);
             }
             
-            // 4. Heuristics
+            // --- Heuristics ---
             const checks = data.details.checks;
             for (const [key, value] of Object.entries(checks)) {
                 const li = document.createElement('li');

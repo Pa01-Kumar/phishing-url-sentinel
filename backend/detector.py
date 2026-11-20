@@ -21,7 +21,7 @@ from rapidfuzz import fuzz
 load_dotenv()
 VT_API_KEY = os.getenv("VIRUSTOTAL_API_KEY")
 HF_TOKEN = os.getenv("HF_TOKEN")
-ABUSE_API_KEY = os.getenv("ABUSEIPDB_API_KEY") # NEW
+ABUSE_API_KEY = os.getenv("ABUSEIPDB_API_KEY")
 
 BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -44,6 +44,7 @@ HIGH_REPUTATION_DOMAINS = {
 }
 
 def check_hf_model(url: str):
+    """Calls the Hugging Face Inference API."""
     if not HF_TOKEN:
         return 0.5 
     
@@ -62,6 +63,7 @@ def check_hf_model(url: str):
     return 0.1 
 
 def is_safe_url(url: str) -> bool:
+    """SSRF Protection: Blocks requests to private, loopback, or internal IPs."""
     try:
         parsed = urlparse(url)
         hostname = parsed.hostname
@@ -106,8 +108,8 @@ def get_ip_info(ip_addr: str):
         pass
     return None
 
-# --- NEW: AbuseIPDB Check ---
 def check_ip_reputation(ip_address: str):
+    """Checks AbuseIPDB for the IP's reputation score."""
     if not ABUSE_API_KEY:
         return None
     try:
@@ -137,10 +139,11 @@ def check_urlhaus(url: str):
     return None
 
 def trace_redirects(url: str):
+    """Tracks HTTP/JS redirects and scans for AiTM iframes."""
     chain = [url]
     penalty = 0.0
     final_url = url
-    extra_heuristics = {} # NEW: To pass back AiTM detection data
+    extra_heuristics = {}
     
     if not is_safe_url(url):
         chain.append("⛔ Blocked: URL points to a private/internal network (SSRF Protection).")
@@ -151,6 +154,7 @@ def trace_redirects(url: str):
         max_redirects = 5
         for _ in range(max_redirects):
             response = requests.get(current_url, timeout=5, allow_redirects=False, stream=True, headers=BROWSER_HEADERS)
+            
             if response.status_code in (301, 302, 303, 307, 308):
                 next_url = response.headers.get('Location')
                 if not next_url: break
@@ -164,7 +168,7 @@ def trace_redirects(url: str):
                 current_url = next_url
                 penalty += 0.1
             else:
-                # --- HTML Parsing for JS Redirects & AiTM ---
+                # Parse HTML for JS Redirects & AiTM
                 try:
                     html_content = response.text[:5000]
                     html_lower = html_content.lower()
@@ -183,7 +187,7 @@ def trace_redirects(url: str):
                         penalty += 0.1
                         continue
                     
-                    # 2. NEW: AiTM / Browser-in-the-Browser (BiTB) Detection
+                    # 2. AiTM / BiTB Detection
                     if '<iframe' in html_lower:
                         if 'width:100%' in html_lower or 'height:100vh' in html_lower or 'position:fixed' in html_lower or 'width: 100%' in html_lower or 'height: 100vh' in html_lower or 'position: fixed' in html_lower:
                             extra_heuristics['aitm_browser_in_browser'] = "Suspicious full-screen iframe detected (Possible AiTM/BiTB)"
@@ -192,10 +196,12 @@ def trace_redirects(url: str):
                 except Exception:
                     pass
                 break
+                
         final_url = current_url
-        penalty = min(penalty, 0.8) # Increased max penalty to allow AiTM to register
+        penalty = min(penalty, 0.8)
     except Exception:
         pass
+        
     return final_url, chain, penalty, extra_heuristics
 
 def check_virustotal(url: str):
@@ -265,20 +271,25 @@ def analyze_url(url: str):
     is_established_domain = False
     network_iocs = {}
     
+    # 1. Percent Encoding Check
     decoded_url = unquote(url)
     if decoded_url != url:
         heuristics['percent_encoding_detected'] = True
         penalty += 0.2
 
+    # 2. Trace Redirects & AiTM
     final_url, redirect_chain, redirect_penalty, redirect_heuristics = trace_redirects(decoded_url)
     penalty += redirect_penalty
-    heuristics.update(redirect_heuristics) # Adds the AiTM warning to the final output
+    heuristics.update(redirect_heuristics)
     
+    # 3. ML Model
     ml_score = check_hf_model(final_url)
     
+    # 4. VirusTotal
     vt_result = check_virustotal(final_url)
     penalty += vt_result.get('vt_penalty', 0.0)
     
+    # 5. URLhaus
     urlhaus_result = check_urlhaus(final_url)
     if urlhaus_result and urlhaus_result.get("status") == "online":
         heuristics['urlhaus_threat'] = urlhaus_result.get("threat", "Malware")
@@ -296,6 +307,7 @@ def analyze_url(url: str):
         normalized_hostname = normalize_homoglyphs(decoded_hostname)
         hostname = normalized_hostname
 
+        # --- Network IOCs (IP, SSL, AbuseIPDB) ---
         try:
             ip_addr = socket.gethostbyname(hostname)
             network_iocs['ip_address'] = ip_addr
@@ -306,7 +318,6 @@ def analyze_url(url: str):
             if ip_info:
                 network_iocs['asn_geoip'] = ip_info
                 
-            # NEW: Check AbuseIPDB Reputation
             abuse_info = check_ip_reputation(ip_addr)
             if abuse_info:
                 network_iocs['abuseipdb'] = abuse_info
