@@ -47,6 +47,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class EmailRequest(BaseModel):
+    text: str
+
+    @field_validator('text')
+    def validate_text(cls, v):
+        if len(v) > 10000:
+            raise ValueError("Email text is too long (max 10,000 characters)")
+        return v
+    
 class URLRequest(BaseModel):
     url: str
 
@@ -157,3 +166,13 @@ async def scan_qr_code(file: UploadFile = File(...)):
         
     except Exception as e:
         return {"error": str(e)}
+
+@app.post("/scan_email")
+@limiter.limit("5/minute")
+def scan_email(request: Request, email_request: EmailRequest):
+    from detector import analyze_email
+    result = analyze_email(email_request.text)
+    # Save to database if a URL was found inside
+    if result['extracted_urls']:
+        database.save_scan(result['extracted_urls'][0], result['risk_score'], result['verdict'])
+    return result

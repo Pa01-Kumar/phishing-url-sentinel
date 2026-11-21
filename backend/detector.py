@@ -468,3 +468,60 @@ def analyze_url(url: str):
             "checks": heuristics
         }
     }
+def analyze_email(text: str):
+    """Analyzes raw email text for social engineering and hidden URLs."""
+    # 1. Extract URLs from the text using Regex
+    url_pattern = r'https?://[^\s<>"]+|www\.[^\s<>"]+'
+    urls = re.findall(url_pattern, text)
+    
+    # 2. Social Engineering Keyword Heuristics
+    urgency_keywords = ['urgent', 'immediate action', 'suspended', 'verify your account', 'click here', 'password', 'unauthorized', 'alert', 'warning', 'expires', 'locked']
+    financial_keywords = ['wire transfer', 'bank account', 'invoice', 'payment', 'bitcoin', 'crypto', 'billing', 'refund']
+    
+    text_lower = text.lower()
+    found_urgency = [kw for kw in urgency_keywords if kw in text_lower]
+    found_financial = [kw for kw in financial_keywords if kw in text_lower]
+    
+    penalty = 0.0
+    heuristics = {}
+    
+    if found_urgency:
+        heuristics['urgency_keywords_detected'] = found_urgency
+        penalty += 0.2 * len(found_urgency)
+        
+    if found_financial:
+        heuristics['financial_keywords_detected'] = found_financial
+        penalty += 0.2 * len(found_financial)
+        
+    # 3. Scan the first URL found in the email (if any)
+    url_result = None
+    if urls:
+        # Clean up the URL if it got caught with a period at the end
+        clean_url = urls[0].rstrip('.')
+        if not clean_url.startswith('http'):
+            clean_url = 'http://' + clean_url
+            
+        url_result = analyze_url(clean_url)
+        # Add the URL's risk score to our email penalty
+        penalty += url_result['risk_score']
+    else:
+        # If there are no URLs, but high urgency/financial keywords, still flag it as suspicious
+        if len(found_urgency) > 1 or len(found_financial) > 1:
+            penalty += 0.3
+
+    final_score = min(penalty, 1.0)
+    
+    if final_score >= 0.7: verdict = "malicious"
+    elif final_score >= 0.3: verdict = "suspicious"
+    else: verdict = "benign"
+
+    return {
+        "type": "email_analysis",
+        "extracted_urls": urls,
+        "risk_score": round(final_score, 3),
+        "verdict": verdict,
+        "details": {
+            "text_heuristics": heuristics,
+            "url_scan_result": url_result
+        }
+    }

@@ -1,4 +1,4 @@
-<!-- V2 -->
+<!-- V3 - Added Email Analyzer -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -11,31 +11,49 @@
 
     <div class="w-full max-w-3xl px-4 pb-20">
         <!-- Header -->
-        <div class="text-center mb-10">
+        <div class="text-center mb-8">
             <h1 class="text-4xl font-bold text-blue-400 mb-2">🛡️ Phishing Sentinel</h1>
-            <p class="text-gray-400">Paste a suspicious link below to scan it using Machine Learning and real-time heuristics.</p>
+            <p class="text-gray-400">Analyze suspicious links, QR codes, or email text using AI and real-time heuristics.</p>
         </div>
 
-        <!-- Input Box -->
-        <div class="flex gap-2 mb-8">
-            <input type="text" id="urlInput" placeholder="https://suspicious-link.com" 
-                class="flex-1 p-3 rounded-lg bg-gray-800 border border-gray-700 text-white focus:outline-none focus:border-blue-500 transition-colors">
-            <button onclick="scanURL()" id="scanBtn"
-                class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center min-w-[100px]">
-                Scan
-            </button>
+        <!-- Toggle Switch -->
+        <div class="flex justify-center mb-6 gap-4">
+            <button id="tabUrlBtn" onclick="switchTab('url')" class="bg-blue-600 text-white font-bold py-2 px-6 rounded-lg transition-colors shadow-lg">Scan URL</button>
+            <button id="tabEmailBtn" onclick="switchTab('email')" class="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg transition-colors">Scan Email Text</button>
         </div>
-                <!-- QR Code Scanner (Quishing) -->
-        <div class="flex justify-center mb-8">
-            <label class="cursor-pointer bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg transition-colors flex items-center gap-2 shadow-lg">
-                <span>📸 Upload QR Code (Quishing)</span>
-                <input type="file" id="qrInput" accept="image/*" class="hidden" onchange="scanQRCode()">
-            </label>
+
+        <!-- URL Input Section -->
+        <div id="urlSection" class="flex flex-col gap-4 mb-8">
+            <div class="flex gap-2">
+                <input type="text" id="urlInput" placeholder="https://suspicious-link.com" 
+                    class="flex-1 p-3 rounded-lg bg-gray-800 border border-gray-700 text-white focus:outline-none focus:border-blue-500 transition-colors">
+                <button onclick="scanURL()" id="scanBtn"
+                    class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center min-w-[100px]">
+                    Scan
+                </button>
+            </div>
+            <!-- QR Code Scanner -->
+            <div class="flex justify-center">
+                <label class="cursor-pointer bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg transition-colors flex items-center gap-2 shadow-lg text-sm">
+                    <span>📸 Upload QR Code (Quishing)</span>
+                    <input type="file" id="qrInput" accept="image/*" class="hidden" onchange="scanQRCode()">
+                </label>
+            </div>
+        </div>
+
+        <!-- Email Input Section (Hidden by default) -->
+        <div id="emailSection" class="hidden flex flex-col gap-2 mb-8">
+            <textarea id="emailInput" rows="6" placeholder="Paste the suspicious email text here..." 
+                class="w-full p-3 rounded-lg bg-gray-800 border border-gray-700 text-white focus:outline-none focus:border-blue-500 transition-colors font-mono text-sm"></textarea>
+            <button onclick="scanEmail()" id="scanEmailBtn"
+                class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition-colors w-full">
+                Analyze Email
+            </button>
         </div>
 
         <!-- Loading Spinner -->
         <div id="loading" class="hidden text-center text-blue-400 mb-8 animate-pulse">
-            <p>Analyzing URL via ML models, VirusTotal, URLhaus, and WHOIS data... (This may take a few seconds)</p>
+            <p>Analyzing via ML models, VirusTotal, and Threat Intel... (This may take a few seconds)</p>
         </div>
 
         <!-- Results Area -->
@@ -53,7 +71,7 @@
             </div>
             
             <div class="mb-6">
-                <p class="text-gray-400 text-sm mb-1">Analyzed URL:</p>
+                <p class="text-gray-400 text-sm mb-1">Analyzed Input:</p>
                 <p id="resultUrl" class="font-mono text-sm break-all bg-gray-900 p-2 rounded"></p>
             </div>
 
@@ -84,7 +102,7 @@
                 </div>
             </div>
 
-            <!-- Detection Details & VirusTotal -->
+            <!-- Detection Details -->
             <div>
                 <p class="text-gray-400 text-sm mb-2">Detection Details:</p>
                 <ul id="detailsList" class="space-y-2 text-sm bg-gray-900 p-4 rounded-lg font-mono">
@@ -106,32 +124,46 @@
     </div>
 
     <script>
+        // IMPORTANT: Keep this pointing to Render for production, or 127.0.0.1:8000 for local testing
+        const API_BASE = 'https://phishing-url-sentinel-1.onrender.com'; 
         let currentScanData = null;
 
-        // Dynamic API Base URL: works seamlessly whether hosted together (Render, Hugging Face, etc.) or standalone
-        const API_BASE = 'https://phishing-url-sentinel-1.onrender.com';
-        
+        // --- TAB SWITCHING LOGIC ---
+        function switchTab(tab) {
+            const urlSection = document.getElementById('urlSection');
+            const emailSection = document.getElementById('emailSection');
+            const tabUrlBtn = document.getElementById('tabUrlBtn');
+            const tabEmailBtn = document.getElementById('tabEmailBtn');
+
+            if (tab === 'email') {
+                urlSection.classList.add('hidden');
+                emailSection.classList.remove('hidden');
+                tabEmailBtn.className = "bg-blue-600 text-white font-bold py-2 px-6 rounded-lg transition-colors shadow-lg";
+                tabUrlBtn.className = "bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg transition-colors";
+            } else {
+                emailSection.classList.add('hidden');
+                urlSection.classList.remove('hidden');
+                tabUrlBtn.className = "bg-blue-600 text-white font-bold py-2 px-6 rounded-lg transition-colors shadow-lg";
+                tabEmailBtn.className = "bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg transition-colors";
+            }
+        }
+
+        // --- URL SCANNING ---
         function validateAndFormatURL(input) {
             let urlToScan = input.trim();
             if (!urlToScan) return null;
-            if (!/^https?:\/\//i.test(urlToScan)) {
-                urlToScan = 'https://' + urlToScan;
-            }
+            if (!/^https?:\/\//i.test(urlToScan)) urlToScan = 'https://' + urlToScan;
             try {
                 new URL(urlToScan); 
                 if (!urlToScan.includes('.')) throw new Error("Invalid format");
                 return urlToScan;
-            } catch (e) {
-                return null;
-            }
+            } catch (e) { return null; }
         }
 
         async function scanURL() {
             const rawInput = document.getElementById('urlInput').value;
             const urlInput = validateAndFormatURL(rawInput);
-            if (!urlInput) {
-                return alert('Please enter a valid URL (e.g., example.com or https://example.com)');
-            }
+            if (!urlInput) return alert('Please enter a valid URL.');
 
             document.getElementById('scanBtn').disabled = true;
             document.getElementById('scanBtn').innerText = 'Scanning...';
@@ -144,81 +176,105 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ url: urlInput })
                 });
-
-                if (response.status === 429) throw new Error("Rate limit exceeded. Please wait a minute.");
-                if (!response.ok) {
-                    if (response.status === 422) throw new Error("Invalid URL format blocked by security validation.");
-                    throw new Error("Server error occurred.");
-                }
-
+                if (!response.ok) throw new Error("Server error occurred.");
                 const data = await response.json();
                 displayResult(data);
-            } catch (error) {
-                alert(error.message);
-                console.error(error);
-            } finally {
+            } catch (error) { alert(error.message); }
+            finally {
                 document.getElementById('scanBtn').disabled = false;
                 document.getElementById('scanBtn').innerText = 'Scan';
                 document.getElementById('loading').classList.add('hidden');
             }
         }
 
+        // --- QR CODE SCANNING ---
+        async function scanQRCode() {
+            const fileInput = document.getElementById('qrInput');
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            document.getElementById('scanBtn').disabled = true;
+            document.getElementById('scanBtn').innerText = 'Scanning...';
+            document.getElementById('loading').classList.remove('hidden');
+            document.getElementById('resultContainer').classList.add('hidden');
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch(`${API_BASE}/scan_qr`, {
+                    method: 'POST',
+                    body: formData
+                });
+                if (!response.ok) throw new Error("Failed to scan QR code.");
+                const data = await response.json();
+                if (data.error) alert(data.error);
+                else displayResult(data);
+            } catch (error) { alert(error.message); }
+            finally {
+                document.getElementById('scanBtn').disabled = false;
+                document.getElementById('scanBtn').innerText = 'Scan';
+                document.getElementById('loading').classList.add('hidden');
+                fileInput.value = ''; 
+            }
+        }
+
+        // --- EMAIL SCANNING ---
+        async function scanEmail() {
+            const text = document.getElementById('emailInput').value;
+            if (!text) return alert('Please paste some email text.');
+
+            document.getElementById('scanEmailBtn').disabled = true;
+            document.getElementById('scanEmailBtn').innerText = 'Analyzing...';
+            document.getElementById('loading').classList.remove('hidden');
+            document.getElementById('resultContainer').classList.add('hidden');
+
+            try {
+                const response = await fetch(`${API_BASE}/scan_email`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: text })
+                });
+                if (!response.ok) throw new Error("Server error occurred.");
+                const data = await response.json();
+                displayEmailResult(data);
+            } catch (error) { alert(error.message); }
+            finally {
+                document.getElementById('scanEmailBtn').disabled = false;
+                document.getElementById('scanEmailBtn').innerText = 'Analyze Email';
+                document.getElementById('loading').classList.add('hidden');
+            }
+        }
+
+        // --- DISPLAY RESULTS ---
         function displayResult(data) {
             currentScanData = data; 
-
             document.getElementById('resultContainer').classList.remove('hidden');
             document.getElementById('resultUrl').innerText = data.url;
             
-            // 1. Risk Score
-            const score = data.risk_score;
-            document.getElementById('riskScoreText').innerText = (score * 100).toFixed(1) + '%';
-            const riskBar = document.getElementById('riskBar');
-            riskBar.style.width = (score * 100) + '%';
+            updateVerdictUI(data.verdict, data.risk_score);
 
-            // 2. Verdict Badge
-            const badge = document.getElementById('verdictBadge');
-            badge.innerText = data.verdict.toUpperCase();
-            badge.className = "px-4 py-1 rounded-full font-bold text-sm ";
-            
-            if (data.verdict === 'malicious') {
-                riskBar.className = "h-4 rounded-full transition-all duration-1000 bg-red-500";
-                badge.className += "bg-red-500 text-white";
-            } else if (data.verdict === 'suspicious') {
-                riskBar.className = "h-4 rounded-full transition-all duration-1000 bg-yellow-500";
-                badge.className += "bg-yellow-500 text-black";
-            } else {
-                riskBar.className = "h-4 rounded-full transition-all duration-1000 bg-green-500";
-                badge.className += "bg-green-500 text-white";
-            }
-
-            // 3. Website Screenshot
+            // Screenshot
             const screenshotContainer = document.getElementById('screenshotContainer');
             const websiteImage = document.getElementById('websiteImage');
             const imageLoading = document.getElementById('imageLoading');
-            
             const rawFinalUrl = data.details.redirect_chain[data.details.redirect_chain.length - 1];
             
             if (rawFinalUrl && rawFinalUrl.startsWith('http')) {
                 try {
                     const urlObj = new URL(rawFinalUrl);
                     const safeUrl = `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}`;
-                    
                     screenshotContainer.classList.remove('hidden');
                     websiteImage.classList.add('hidden');
                     imageLoading.style.display = 'block';
                     websiteImage.src = `https://image.thum.io/get/width/800/crop/600/${safeUrl}?t=${Date.now()}`;
-                } catch (e) {
-                    screenshotContainer.classList.add('hidden');
-                }
-            } else {
-                screenshotContainer.classList.add('hidden');
-            }
+                } catch (e) { screenshotContainer.classList.add('hidden'); }
+            } else { screenshotContainer.classList.add('hidden'); }
 
-            // 4. Redirect Chain
+            // Redirects
             const redirectContainer = document.getElementById('redirectContainer');
             const redirectList = document.getElementById('redirectList');
             redirectList.innerHTML = '';
-            
             if (data.details.redirect_chain && data.details.redirect_chain.length > 1) {
                 redirectContainer.classList.remove('hidden');
                 data.details.redirect_chain.forEach((link, index) => {
@@ -226,29 +282,24 @@
                     p.innerText = (index > 0 ? "⬇️ " : "📍 ") + link;
                     redirectList.appendChild(p);
                 });
-            } else {
-                redirectContainer.classList.add('hidden');
-            }
+            } else { redirectContainer.classList.add('hidden'); }
 
-            // 5. Detection Details
+            // Details
             const detailsList = document.getElementById('detailsList');
             detailsList.innerHTML = ''; 
             
-            // --- VirusTotal ---
             if (data.details.virustotal_stats) {
                 const vt = data.details.virustotal_stats;
                 const vtLi = document.createElement('li');
                 vtLi.className = "border-b border-gray-700 pb-2 mb-2 font-bold";
-                if (vt.error) {
-                    vtLi.innerHTML = `<span class="text-red-400">VirusTotal:</span> <span class="text-gray-400">${vt.error}</span>`;
-                } else {
+                if (vt.error) vtLi.innerHTML = `<span class="text-red-400">VirusTotal:</span> <span class="text-gray-400">${vt.error}</span>`;
+                else {
                     const color = vt.malicious > 0 ? "text-red-400" : "text-green-400";
                     vtLi.innerHTML = `<span class="text-blue-400">VirusTotal:</span> <span class="${color}">${vt.malicious} / ${vt.total_engines}</span> security vendors flagged this URL.`;
                 }
                 detailsList.appendChild(vtLi);
             }
 
-            // --- URLhaus ---
             if (data.details.urlhaus_stats && data.details.urlhaus_stats.status === 'online') {
                 const uLi = document.createElement('li');
                 uLi.className = "border-b border-gray-700 pb-2 mb-2 font-bold text-red-400";
@@ -256,18 +307,16 @@
                 detailsList.appendChild(uLi);
             }
 
-            // --- AbuseIPDB ---
             if (data.details.network_iocs && data.details.network_iocs.abuseipdb) {
                 const iocs = data.details.network_iocs;
                 const abuseLi = document.createElement('li');
                 abuseLi.className = "border-b border-gray-700 pb-2 mb-2 font-bold";
-                const abuseScore = iocs.abuseipdb.abuse_confidence_score;
-                const color = abuseScore > 50 ? "text-red-400" : (abuseScore > 0 ? "text-yellow-400" : "text-green-400");
-                abuseLi.innerHTML = `<span class="text-blue-400">AbuseIPDB:</span> <span class="${color}">${abuseScore}% Abuse Score</span> <span class="text-gray-400">(ISP: ${iocs.abuseipdb.isp})</span>`;
+                const score = iocs.abuseipdb.abuse_confidence_score;
+                const color = score > 50 ? "text-red-400" : (score > 0 ? "text-yellow-400" : "text-green-400");
+                abuseLi.innerHTML = `<span class="text-blue-400">AbuseIPDB:</span> <span class="${color}">${score}% Abuse Score</span> <span class="text-gray-400">(ISP: ${iocs.abuseipdb.isp})</span>`;
                 detailsList.appendChild(abuseLi);
             }
             
-            // --- Heuristics ---
             const checks = data.details.checks;
             for (const [key, value] of Object.entries(checks)) {
                 const li = document.createElement('li');
@@ -278,6 +327,54 @@
             loadHistory(); 
         }
 
+        function displayEmailResult(data) {
+            currentScanData = data; 
+            document.getElementById('resultContainer').classList.remove('hidden');
+            document.getElementById('resultUrl').innerText = "Email Text Analysis";
+            
+            updateVerdictUI(data.verdict, data.risk_score);
+
+            document.getElementById('screenshotContainer').classList.add('hidden');
+            document.getElementById('redirectContainer').classList.add('hidden');
+
+            const detailsList = document.getElementById('detailsList');
+            detailsList.innerHTML = ''; 
+            
+            if (data.extracted_urls && data.extracted_urls.length > 0) {
+                const uLi = document.createElement('li');
+                uLi.className = "border-b border-gray-700 pb-2 mb-2 font-bold";
+                uLi.innerHTML = `<span class="text-blue-400">Extracted URLs:</span> <span class="text-yellow-300">${data.extracted_urls.join(', ')}</span>`;
+                detailsList.appendChild(uLi);
+            }
+
+            const checks = data.details.text_heuristics;
+            for (const [key, value] of Object.entries(checks)) {
+                const li = document.createElement('li');
+                li.innerHTML = `<span class="text-blue-400">${key}:</span> <span class="text-red-300">${JSON.stringify(value)}</span>`;
+                detailsList.appendChild(li);
+            }
+        }
+
+        function updateVerdictUI(verdict, score) {
+            document.getElementById('riskScoreText').innerText = (score * 100).toFixed(1) + '%';
+            const riskBar = document.getElementById('riskBar');
+            riskBar.style.width = (score * 100) + '%';
+            const badge = document.getElementById('verdictBadge');
+            badge.innerText = verdict.toUpperCase();
+            
+            if (verdict === 'malicious') {
+                riskBar.className = "h-4 rounded-full transition-all duration-1000 bg-red-500";
+                badge.className = "px-4 py-1 rounded-full font-bold text-sm bg-red-500 text-white";
+            } else if (verdict === 'suspicious') {
+                riskBar.className = "h-4 rounded-full transition-all duration-1000 bg-yellow-500";
+                badge.className = "px-4 py-1 rounded-full font-bold text-sm bg-yellow-500 text-black";
+            } else {
+                riskBar.className = "h-4 rounded-full transition-all duration-1000 bg-green-500";
+                badge.className = "px-4 py-1 rounded-full font-bold text-sm bg-green-500 text-white";
+            }
+        }
+
+        // --- HISTORY & UTILS ---
         function downloadReport() {
             if (!currentScanData) return;
             const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(currentScanData, null, 2));
@@ -289,7 +386,6 @@
             downloadAnchorNode.remove();
         }
 
-        // --- UPDATED: History Load with Feedback Buttons & XSS Protection ---
         async function loadHistory() {
             try {
                 const response = await fetch(`${API_BASE}/history`);
@@ -305,36 +401,32 @@
                     const li = document.createElement('li');
                     li.className = "flex justify-between items-center border-b border-gray-700 pb-2 gap-2";
                     
-                    // 1. URL
                     const urlSpan = document.createElement('span');
                     urlSpan.className = "truncate w-1/3";
                     urlSpan.title = item.url; 
                     urlSpan.textContent = item.url;
 
-                    // 2. Verdict
                     const verdictSpan = document.createElement('span');
                     verdictSpan.className = `${colorClass} font-bold uppercase text-xs w-20 text-center`;
                     verdictSpan.textContent = item.verdict;
 
-                    // 3. Timestamp
                     const timeSpan = document.createElement('span');
                     timeSpan.className = "text-gray-500 text-xs w-28 text-right hidden sm:block";
                     timeSpan.textContent = item.timestamp;
 
-                    // 4. Actions (Feedback & Delete)
                     const btnContainer = document.createElement('div');
                     btnContainer.className = "flex items-center justify-end w-28";
 
                     if (item.feedback === 'none' || !item.feedback) {
                         const thumbsUp = document.createElement('button');
                         thumbsUp.className = "text-gray-500 hover:text-red-400 ml-2 transition-colors text-base";
-                        thumbsUp.title = "True Positive (Correct)";
+                        thumbsUp.title = "True Positive";
                         thumbsUp.textContent = "👍";
                         thumbsUp.onclick = () => submitFeedback(item.id, 'true_positive');
                         
                         const thumbsDown = document.createElement('button');
                         thumbsDown.className = "text-gray-500 hover:text-green-400 ml-1 transition-colors text-base";
-                        thumbsDown.title = "False Positive (Incorrect)";
+                        thumbsDown.title = "False Positive";
                         thumbsDown.textContent = "👎";
                         thumbsDown.onclick = () => submitFeedback(item.id, 'false_positive');
                         
@@ -354,36 +446,28 @@
                     deleteBtn.onclick = () => deleteSingleScan(item.id);
                     btnContainer.appendChild(deleteBtn);
 
-                    // Assemble row
                     li.appendChild(urlSpan);
                     li.appendChild(verdictSpan);
                     li.appendChild(timeSpan);
                     li.appendChild(btnContainer);
-
                     historyList.appendChild(li);
                 });
-            } catch (error) {
-                console.error("Failed to load history", error);
-            }
+            } catch (error) { console.error("Failed to load history", error); }
         }
 
         async function clearHistory() {
-            if (!confirm("Are you sure you want to delete all scan history?")) return;
+            if (!confirm("Delete all scan history?")) return;
             try {
                 const response = await fetch(`${API_BASE}/history`, { method: 'DELETE' });
                 if (response.ok) loadHistory(); 
-            } catch (error) {
-                console.error("Failed to clear history", error);
-            }
+            } catch (error) { console.error(error); }
         }
 
         async function deleteSingleScan(scanId) {
             try {
                 const response = await fetch(`${API_BASE}/history/${scanId}`, { method: 'DELETE' });
                 if (response.ok) loadHistory(); 
-            } catch (error) {
-                console.error("Failed to delete scan", error);
-            }
+            } catch (error) { console.error(error); }
         }
 
         async function submitFeedback(scanId, feedbackType) {
@@ -393,49 +477,8 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ scan_id: scanId, feedback: feedbackType })
                 });
-                if (response.ok) {
-                    loadHistory(); // Refresh to show the new state
-                }
-            } catch (error) {
-                console.error("Failed to submit feedback", error);
-            }
-        }
-        async function scanQRCode() {
-            const fileInput = document.getElementById('qrInput');
-            const file = fileInput.files[0];
-            if (!file) return;
-
-            // UI Updates
-            document.getElementById('scanBtn').disabled = true;
-            document.getElementById('scanBtn').innerText = 'Scanning...';
-            document.getElementById('loading').classList.remove('hidden');
-            document.getElementById('resultContainer').classList.add('hidden');
-
-            const formData = new FormData();
-            formData.append('file', file);
-
-            try {
-                const response = await fetch(`${API_BASE}/scan_qr`, {
-                    method: 'POST',
-                    body: formData
-                });
-
-                if (!response.ok) throw new Error("Failed to scan QR code.");
-                const data = await response.json();
-                
-                if (data.error) {
-                    alert(data.error);
-                } else {
-                    displayResult(data);
-                }
-            } catch (error) {
-                alert(error.message);
-            } finally {
-                document.getElementById('scanBtn').disabled = false;
-                document.getElementById('scanBtn').innerText = 'Scan';
-                document.getElementById('loading').classList.add('hidden');
-                fileInput.value = ''; // Clear file input
-            }
+                if (response.ok) loadHistory(); 
+            } catch (error) { console.error(error); }
         }
 
         window.onload = loadHistory;
