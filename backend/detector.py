@@ -469,8 +469,8 @@ def analyze_url(url: str):
         }
     }
 def analyze_email(text: str):
-    """Analyzes raw email text for social engineering and hidden URLs."""
-    # 1. Extract URLs from the text using Regex
+    """Analyzes raw email text for social engineering, brand impersonation, and hidden URLs."""
+    # 1. Extract URLs
     url_pattern = r'https?://[^\s<>"]+|www\.[^\s<>"]+'
     urls = re.findall(url_pattern, text)
     
@@ -484,6 +484,7 @@ def analyze_email(text: str):
     
     penalty = 0.0
     heuristics = {}
+    ai_warning = None
     
     if found_urgency:
         heuristics['urgency_keywords_detected'] = found_urgency
@@ -493,21 +494,31 @@ def analyze_email(text: str):
         heuristics['financial_keywords_detected'] = found_financial
         penalty += 0.2 * len(found_financial)
         
-    # 3. Scan the first URL found in the email (if any)
+    # 3. Scan the URL (if found)
     url_result = None
     if urls:
-        # Clean up the URL if it got caught with a period at the end
         clean_url = urls[0].rstrip('.')
         if not clean_url.startswith('http'):
             clean_url = 'http://' + clean_url
-            
         url_result = analyze_url(clean_url)
-        # Add the URL's risk score to our email penalty
         penalty += url_result['risk_score']
     else:
-        # If there are no URLs, but high urgency/financial keywords, still flag it as suspicious
         if len(found_urgency) > 1 or len(found_financial) > 1:
             penalty += 0.3
+
+    # --- NEW: AI-Generated Brand Impersonation Check ---
+    brands_in_text = [brand for brand in HIGH_REPUTATION_DOMAINS if brand in text_lower and len(brand) > 3]
+    
+    if brands_in_text and urls:
+        for brand in brands_in_text:
+            # Check if the brand is actually in the extracted URL
+            if not any(brand in url.lower() for url in urls):
+                heuristics['ai_brand_impersonation'] = f"Text claims to be from '{brand}', but the URL does not belong to them."
+                penalty += 0.4 # Heavy penalty for AI-style impersonation
+
+    # Add the explicit AI warning if the score is high enough
+    if penalty >= 0.5:
+        ai_warning = "⚠️ AI DECEPTION WARNING: This message uses sophisticated language typical of AI-generated phishing. Attackers now use flawless text and deepfakes to impersonate brands. NEVER trust a link based on the text alone; verify the sender through a separate channel."
 
     final_score = min(penalty, 1.0)
     
@@ -520,6 +531,7 @@ def analyze_email(text: str):
         "extracted_urls": urls,
         "risk_score": round(final_score, 3),
         "verdict": verdict,
+        "ai_warning": ai_warning, # NEW
         "details": {
             "text_heuristics": heuristics,
             "url_scan_result": url_result

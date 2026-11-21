@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Phishing URL Sentinel</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body class="bg-gray-900 text-white font-sans min-h-screen flex flex-col items-center pt-20">
 
@@ -16,10 +17,11 @@
             <p class="text-gray-400">Analyze suspicious links, QR codes, or email text using AI and real-time heuristics.</p>
         </div>
 
-        <!-- Toggle Switch -->
+                <!-- Toggle Switch -->
         <div class="flex justify-center mb-6 gap-4">
             <button id="tabUrlBtn" onclick="switchTab('url')" class="bg-blue-600 text-white font-bold py-2 px-6 rounded-lg transition-colors shadow-lg">Scan URL</button>
-            <button id="tabEmailBtn" onclick="switchTab('email')" class="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg transition-colors">Scan Email Text</button>
+            <button id="tabEmailBtn" onclick="switchTab('email')" class="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg transition-colors">Scan Email</button>
+            <button id="tabAnalyticsBtn" onclick="switchTab('analytics')" class="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg transition-colors">Analytics</button>
         </div>
 
         <!-- URL Input Section -->
@@ -51,6 +53,26 @@
             </button>
         </div>
 
+                <!-- Analytics Dashboard (Hidden by default) -->
+        <div id="analyticsSection" class="hidden flex flex-col gap-6 mb-8 bg-gray-800 p-6 rounded-xl border border-gray-700 shadow-xl">
+            <h2 class="text-2xl font-bold text-center">Threat Intelligence Dashboard</h2>
+            
+            <div class="grid grid-cols-2 gap-4 text-center">
+                <div class="bg-gray-900 p-4 rounded-lg">
+                    <p class="text-gray-400 text-sm">Total Scans</p>
+                    <p id="statTotal" class="text-3xl font-bold text-white">0</p>
+                </div>
+                <div class="bg-gray-900 p-4 rounded-lg">
+                    <p class="text-gray-400 text-sm">Threats Blocked</p>
+                    <p id="statThreats" class="text-3xl font-bold text-red-400">0</p>
+                </div>
+            </div>
+
+            <div class="w-full max-w-sm mx-auto">
+                <canvas id="verdictChart"></canvas>
+            </div>
+        </div>
+
         <!-- Loading Spinner -->
         <div id="loading" class="hidden text-center text-blue-400 mb-8 animate-pulse">
             <p>Analyzing via ML models, VirusTotal, and Threat Intel... (This may take a few seconds)</p>
@@ -65,6 +87,9 @@
                 <div class="flex items-center gap-3">
                     <button onclick="downloadReport()" class="bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold py-2 px-3 rounded-lg transition-colors flex items-center gap-1">
                         ⬇️ Download JSON
+                    </button>
+                    <button onclick="downloadSTIX()" class="bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold py-2 px-3 rounded-lg transition-colors flex items-center gap-1">
+                        ⬇️ Download STIX
                     </button>
                     <span id="verdictBadge" class="px-4 py-1 rounded-full font-bold text-sm"></span>
                 </div>
@@ -125,29 +150,40 @@
 
     <script>
         // IMPORTANT: Keep this pointing to Render for production, or 127.0.0.1:8000 for local testing
-        const API_BASE = 'https://phishing-url-sentinel-1.onrender.com'; 
+        const API_BASE = 'http://127.0.0.1:8000'; 
         let currentScanData = null;
 
         // --- TAB SWITCHING LOGIC ---
         function switchTab(tab) {
             const urlSection = document.getElementById('urlSection');
             const emailSection = document.getElementById('emailSection');
+            const analyticsSection = document.getElementById('analyticsSection');
             const tabUrlBtn = document.getElementById('tabUrlBtn');
             const tabEmailBtn = document.getElementById('tabEmailBtn');
+            const tabAnalyticsBtn = document.getElementById('tabAnalyticsBtn');
+
+            // Hide all sections
+            urlSection.classList.add('hidden');
+            emailSection.classList.add('hidden');
+            analyticsSection.classList.add('hidden');
+            
+            // Reset all buttons
+            tabUrlBtn.className = "bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg transition-colors";
+            tabEmailBtn.className = "bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg transition-colors";
+            tabAnalyticsBtn.className = "bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg transition-colors";
 
             if (tab === 'email') {
-                urlSection.classList.add('hidden');
                 emailSection.classList.remove('hidden');
                 tabEmailBtn.className = "bg-blue-600 text-white font-bold py-2 px-6 rounded-lg transition-colors shadow-lg";
-                tabUrlBtn.className = "bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg transition-colors";
+            } else if (tab === 'analytics') {
+                analyticsSection.classList.remove('hidden');
+                tabAnalyticsBtn.className = "bg-blue-600 text-white font-bold py-2 px-6 rounded-lg transition-colors shadow-lg";
+                loadAnalytics(); // Fetch data when tab is clicked
             } else {
-                emailSection.classList.add('hidden');
                 urlSection.classList.remove('hidden');
                 tabUrlBtn.className = "bg-blue-600 text-white font-bold py-2 px-6 rounded-lg transition-colors shadow-lg";
-                tabEmailBtn.className = "bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg transition-colors";
             }
         }
-
         // --- URL SCANNING ---
         function validateAndFormatURL(input) {
             let urlToScan = input.trim();
@@ -340,6 +376,14 @@
             const detailsList = document.getElementById('detailsList');
             detailsList.innerHTML = ''; 
             
+            // NEW: Render the AI Deception Warning
+            if (data.ai_warning) {
+                const warningLi = document.createElement('li');
+                warningLi.className = "bg-red-900 border border-red-500 p-3 rounded-lg mb-4 text-red-200 font-sans text-sm font-bold";
+                warningLi.innerHTML = data.ai_warning;
+                detailsList.appendChild(warningLi);
+            }
+
             if (data.extracted_urls && data.extracted_urls.length > 0) {
                 const uLi = document.createElement('li');
                 uLi.className = "border-b border-gray-700 pb-2 mb-2 font-bold";
@@ -350,7 +394,12 @@
             const checks = data.details.text_heuristics;
             for (const [key, value] of Object.entries(checks)) {
                 const li = document.createElement('li');
-                li.innerHTML = `<span class="text-blue-400">${key}:</span> <span class="text-red-300">${JSON.stringify(value)}</span>`;
+                // Make the brand impersonation heuristic stand out
+                if (key === 'ai_brand_impersonation') {
+                    li.innerHTML = `<span class="text-red-400 font-bold">${key}:</span> <span class="text-red-300">${JSON.stringify(value)}</span>`;
+                } else {
+                    li.innerHTML = `<span class="text-blue-400">${key}:</span> <span class="text-red-300">${JSON.stringify(value)}</span>`;
+                }
                 detailsList.appendChild(li);
             }
         }
@@ -384,6 +433,43 @@
             document.body.appendChild(downloadAnchorNode); 
             downloadAnchorNode.click();
             downloadAnchorNode.remove();
+        }
+
+        async function downloadSTIX() {
+            if (!currentScanData || !currentScanData.url) return;
+            
+            // Show a quick loading state on the button
+            const stixBtn = event.target.closest('button');
+            const originalText = stixBtn.innerHTML;
+            stixBtn.innerHTML = '⏳ Generating...';
+            stixBtn.disabled = true;
+
+            try {
+                const response = await fetch(`${API_BASE}/scan/stix`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: currentScanData.url })
+                });
+                
+                if (!response.ok) throw new Error("Failed to generate STIX");
+                
+                const stixData = await response.json();
+                const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(stixData, null, 2));
+                
+                const downloadAnchorNode = document.createElement('a');
+                downloadAnchorNode.setAttribute("href", dataStr);
+                downloadAnchorNode.setAttribute("download", "stix_report_" + Date.now() + ".json");
+                document.body.appendChild(downloadAnchorNode); 
+                downloadAnchorNode.click();
+                downloadAnchorNode.remove();
+                
+            } catch (error) {
+                alert("Error generating STIX report: " + error.message);
+            } finally {
+                // Restore button state
+                stixBtn.innerHTML = originalText;
+                stixBtn.disabled = false;
+            }
         }
 
         async function loadHistory() {
@@ -481,6 +567,40 @@
             } catch (error) { console.error(error); }
         }
 
+        let chartInstance = null;
+
+        async function loadAnalytics() {
+            try {
+                const response = await fetch(`${API_BASE}/analytics`);
+                const data = await response.json();
+                
+                document.getElementById('statTotal').innerText = data.total_scans;
+                document.getElementById('statThreats').innerText = data.suspicious + data.malicious;
+
+                // Destroy old chart if it exists
+                if (chartInstance) chartInstance.destroy();
+
+                const ctx = document.getElementById('verdictChart').getContext('2d');
+                chartInstance = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Benign', 'Suspicious', 'Malicious'],
+                        datasets: [{
+                            data: [data.benign, data.suspicious, data.malicious],
+                            backgroundColor: ['#22c55e', '#eab308', '#ef4444'], // Green, Yellow, Red
+                            borderWidth: 0
+                        }]
+                    },
+                    options: {
+                        plugins: {
+                            legend: { labels: { color: 'white' } }
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error("Failed to load analytics", error);
+            }
+        }
         window.onload = loadHistory;
     </script>
 </body>

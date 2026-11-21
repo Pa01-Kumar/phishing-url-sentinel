@@ -71,3 +71,24 @@ def clear_history():
     cursor.execute('DELETE FROM scans')
     conn.commit()
     conn.close()
+
+def get_analytics():
+    """Fetches counts of each verdict type and total scans."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    # Get total scans
+    cursor.execute("SELECT COUNT(*) FROM scans")
+    total = cursor.fetchone()[0]
+    
+    # Get counts per verdict
+    cursor.execute("SELECT verdict, COUNT(*) FROM scans GROUP BY verdict")
+    verdict_counts = dict(cursor.fetchall())
+    
+    conn.close()
+    return {
+        "total_scans": total,
+        "benign": verdict_counts.get("benign", 0),
+        "suspicious": verdict_counts.get("suspicious", 0),
+        "malicious": verdict_counts.get("malicious", 0)
+    }

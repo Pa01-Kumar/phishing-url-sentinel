@@ -176,3 +176,7 @@ def scan_email(request: Request, email_request: EmailRequest):
     if result['extracted_urls']:
         database.save_scan(result['extracted_urls'][0], result['risk_score'], result['verdict'])
     return result
+
+@app.get("/analytics")
+def get_analytics_data():
+    return database.get_analytics()
