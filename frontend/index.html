@@ -353,6 +353,22 @@
                 detailsList.appendChild(abuseLi);
             }
             
+                        // --- NEW: SSL Certificate Info ---
+            if (data.details.network_iocs && data.details.network_iocs.ssl_cert) {
+                const ssl = data.details.network_iocs.ssl_cert;
+                const sslLi = document.createElement('li');
+                sslLi.className = "border-b border-gray-700 pb-2 mb-2";
+                
+                if (ssl.is_self_signed) {
+                    sslLi.innerHTML = `<span class="text-blue-400">SSL Cert:</span> <span class="text-red-400 font-bold">Self-Signed</span> <span class="text-gray-400">(Issuer: ${ssl.issuer})</span>`;
+                } else if (ssl.days_old !== null && ssl.days_old < 7) {
+                    sslLi.innerHTML = `<span class="text-blue-400">SSL Cert:</span> <span class="text-red-400 font-bold">Very New (${ssl.days_old} days old)</span> <span class="text-gray-400">(Issuer: ${ssl.issuer})</span>`;
+                } else {
+                    sslLi.innerHTML = `<span class="text-blue-400">SSL Cert:</span> <span class="text-green-400 font-bold">Valid</span> <span class="text-gray-400">(Issuer: ${ssl.issuer})</span>`;
+                }
+                detailsList.appendChild(sslLi);
+            }
+            
             const checks = data.details.checks;
             for (const [key, value] of Object.entries(checks)) {
                 const li = document.createElement('li');

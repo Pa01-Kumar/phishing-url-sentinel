@@ -88,18 +88,41 @@ def is_safe_url(url: str) -> bool:
 
 def get_ssl_info(hostname: str):
     try:
-        context = ssl.create_default_context()
+        # Create an unverified context so we can read self-signed certs
+        context = ssl._create_unverified_context()
         with socket.create_connection((hostname, 443), timeout=3) as sock:
             with context.wrap_socket(sock, server_hostname=hostname) as ssock:
                 cert = ssock.getpeercert()
+                
+                issuer = dict(x[0] for x in cert['issuer']).get('organizationName', 'Unknown')
+                subject = dict(x[0] for x in cert['subject']).get('commonName', 'Unknown')
+                valid_from_str = cert.get('notBefore', 'Unknown')
+                valid_until_str = cert.get('notAfter', 'Unknown')
+                
+                # Calculate how many days old the certificate is
+                days_old = None
+                if valid_from_str != 'Unknown':
+                    try:
+                        # Format: 'Jan 27 23:59:59 2027 GMT'
+                        dt_valid_from = datetime.strptime(valid_from_str, '%b %d %H:%M:%S %Y %Z')
+                        days_old = (datetime.utcnow() - dt_valid_from).days
+                    except Exception:
+                        pass
+
+                # Check if the certificate is self-signed
+                is_self_signed = (issuer == subject and issuer != 'Unknown')
+
                 return {
-                    "issuer": dict(x[0] for x in cert['issuer']).get('organizationName', 'Unknown'),
-                    "subject": dict(x[0] for x in cert['subject']).get('commonName', 'Unknown'),
-                    "valid_until": cert.get('notAfter', 'Unknown')
+                    "issuer": issuer,
+                    "subject": subject,
+                    "valid_from": valid_from_str,
+                    "valid_until": valid_until_str,
+                    "days_old": days_old,
+                    "is_self_signed": is_self_signed
                 }
     except Exception:
         return None
-
+    
 def get_ip_info(ip_addr: str):
     try:
         response = requests.get(f"http://ip-api.com/json/{ip_addr}?fields=status,country,city,isp,org,as", timeout=3)
@@ -319,11 +342,30 @@ def analyze_url(url: str):
         normalized_hostname = normalize_homoglyphs(decoded_hostname)
         hostname = normalized_hostname
 
-        # --- Network IOCs (IP, SSL, AbuseIPDB) ---
+                # --- Network IOCs (IP, SSL, AbuseIPDB) ---
         try:
             ip_addr = socket.gethostbyname(hostname)
             network_iocs['ip_address'] = ip_addr
-            network_iocs['ssl_cert'] = get_ssl_info(hostname)
+            
+            # --- NEW: Reliable SSL Verification ---
+            try:
+                # This will throw an error if the cert is invalid or self-signed
+                requests.get(f"https://{hostname}", timeout=5, verify=True, headers=BROWSER_HEADERS)
+                heuristics['ssl_valid'] = True
+            except requests.exceptions.SSLError:
+                heuristics['invalid_ssl_certificate'] = "Invalid or Self-Signed SSL Certificate"
+                penalty += 0.6
+            except Exception:
+                pass # Ignore timeouts/connection errors for this specific check
+
+            # Try to extract details (dates, issuer) anyway
+            ssl_info = get_ssl_info(hostname)
+            if ssl_info:
+                network_iocs['ssl_cert'] = ssl_info
+                if ssl_info.get('days_old') is not None and ssl_info['days_old'] < 7:
+                    heuristics['new_ssl_certificate'] = f"Certificate issued only {ssl_info['days_old']} days ago"
+                    penalty += 0.4
+
             network_iocs['favicon_hash'] = get_favicon_hash(final_url)
             
             ip_info = get_ip_info(ip_addr)
@@ -445,8 +487,13 @@ def analyze_url(url: str):
         heuristics['parsing_error'] = str(e)
 
         # ADDED: visual_brand_cloning to the bypass condition so it NEVER gets overridden
-    if (is_high_reputation or is_established_domain) and not heuristics.get('punycode_homoglyph_attack') and not heuristics.get('typosquatting_warning') and not heuristics.get('visual_brand_cloning'):
+        # ADDED: SSL checks so old domains can't hide self-signed certs
+        # Added invalid_ssl_certificate and new_ssl_certificate to block the override
+    if (is_high_reputation or is_established_domain) and not heuristics.get('punycode_homoglyph_attack') and not heuristics.get('typosquatting_warning') and not heuristics.get('visual_brand_cloning') and not heuristics.get('invalid_ssl_certificate') and not heuristics.get('new_ssl_certificate'):
         heuristics['trusted_domain'] = True
+        penalty = min(penalty, 0.1)
+        ml_score = 0.0
+        heuristics['ml_score_overridden'] = True
 
     final_score = min(ml_score + penalty, 1.0)
     
