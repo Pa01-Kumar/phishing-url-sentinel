@@ -111,11 +111,12 @@ def get_ip_info(ip_addr: str):
 def check_ip_reputation(ip_address: str):
     """Checks AbuseIPDB for the IP's reputation score."""
     if not ABUSE_API_KEY:
-        return None
+        return {"error": "ABUSEIPDB_API_KEY is missing in environment variables."}
     try:
         url = f"https://api.abuseipdb.com/api/v2/check?ipAddress={ip_address}&maxAgeInDays=90"
         headers = {"Key": ABUSE_API_KEY, "Accept": "application/json"}
         response = requests.get(url, headers=headers, timeout=5)
+        
         if response.status_code == 200:
             data = response.json()["data"]
             return {
@@ -123,9 +124,12 @@ def check_ip_reputation(ip_address: str):
                 "country": data.get("countryCode", "Unknown"),
                 "isp": data.get("isp", "Unknown")
             }
-    except Exception:
-        pass
-    return None
+        else:
+            # Return the error from AbuseIPDB so we can see it in the UI
+            return {"error": f"API Error: {response.status_code} - {response.text}"}
+            
+    except Exception as e:
+        return {"error": f"Exception: {str(e)}"}
 
 def check_urlhaus(url: str):
     try:
