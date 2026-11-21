@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import math
@@ -17,6 +18,13 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse, unquote
 from dotenv import load_dotenv
 from rapidfuzz import fuzz
+
+# Load the brand hashes
+try:
+    with open("brand_hashes.json", "r") as f:
+        BRAND_FAVICONS = json.load(f)
+except FileNotFoundError:
+    BRAND_FAVICONS = {} 
 
 load_dotenv()
 VT_API_KEY = os.getenv("VIRUSTOTAL_API_KEY")
@@ -357,6 +365,16 @@ def analyze_url(url: str):
             root_domain = f"{extracted.domain}.{extracted.suffix}"
             domain_name_only = extracted.domain.lower()
             subdomain = extracted.subdomain.lower()
+                        # --- NEW: Visual Brand Cloning Detection ---
+            scanned_favicon = network_iocs.get('favicon_hash')
+            if scanned_favicon and BRAND_FAVICONS:
+                for brand, brand_hash in BRAND_FAVICONS.items():
+                    if scanned_favicon == brand_hash:
+                        if brand not in domain_name_only:
+                            heuristics['visual_brand_cloning'] = f"Favicon matches '{brand}', but domain does not. (Logo Theft)"
+                            penalty += 1.0 # Instant malicious score
+                        break
+            # -------------------------------------------
             
             is_high_reputation = (domain_name_only in HIGH_REPUTATION_DOMAINS) or (extracted.suffix.lower() in HIGH_REPUTATION_DOMAINS)
 
@@ -426,11 +444,9 @@ def analyze_url(url: str):
     except Exception as e:
         heuristics['parsing_error'] = str(e)
 
-    if (is_high_reputation or is_established_domain) and not heuristics.get('punycode_homoglyph_attack') and not heuristics.get('typosquatting_warning'):
+        # ADDED: visual_brand_cloning to the bypass condition so it NEVER gets overridden
+    if (is_high_reputation or is_established_domain) and not heuristics.get('punycode_homoglyph_attack') and not heuristics.get('typosquatting_warning') and not heuristics.get('visual_brand_cloning'):
         heuristics['trusted_domain'] = True
-        penalty = min(penalty, 0.1)
-        ml_score = 0.0
-        heuristics['ml_score_overridden'] = True
 
     final_score = min(ml_score + penalty, 1.0)
     
