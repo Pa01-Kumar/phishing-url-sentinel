@@ -1,3 +1,7 @@
+import time
+from fastapi.responses import Response, JSONResponse
+from fastapi.responses import Response
+from pdf_generator import generate_pdf
 from fastapi import FastAPI, Request, File, UploadFile
 from pydantic import BaseModel, field_validator
 import validators
@@ -180,3 +184,16 @@ def scan_email(request: Request, email_request: EmailRequest):
 @app.get("/analytics")
 def get_analytics_data():
     return database.get_analytics()
+
+@app.post("/export/pdf")
+def export_pdf(data: dict):
+    try:
+        pdf_bytes = generate_pdf(data)
+        return Response(
+            content=bytes(pdf_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename=Threat_Report_{int(time.time())}.pdf"}
+        )
+    except Exception as e:
+        print(f"🚨 PDF GENERATION ERROR: {e}") # This will print to your terminal
+        return JSONResponse(status_code=500, content={"error": str(e)})

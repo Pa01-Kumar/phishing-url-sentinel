@@ -91,6 +91,9 @@
                     <button onclick="downloadSTIX()" class="bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold py-2 px-3 rounded-lg transition-colors flex items-center gap-1">
                         ⬇️ Download STIX
                     </button>
+                    <button onclick="downloadPDF()" class="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-2 px-3 rounded-lg transition-colors flex items-center gap-1 shadow-lg">
+                        📄 PDF Report
+                    </button>
                     <span id="verdictBadge" class="px-4 py-1 rounded-full font-bold text-sm"></span>
                 </div>
             </div>
@@ -487,7 +490,44 @@
                 stixBtn.disabled = false;
             }
         }
+        
+        async function downloadPDF() {
+            if (!currentScanData || !currentScanData.url) return;
+            
+            const pdfBtn = event.target.closest('button');
+            const originalText = pdfBtn.innerHTML;
+            pdfBtn.innerHTML = '⏳ Generating...';
+            pdfBtn.disabled = true;
 
+            try {
+                const response = await fetch(`${API_BASE}/export/pdf`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(currentScanData)
+                });
+                
+                if (!response.ok) {
+                    // Try to read the error from the backend
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || "Server error");
+                }
+                
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `Threat_Report_${Date.now()}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                
+            } catch (error) {
+                alert("Error generating PDF: " + error.message);
+            } finally {
+                pdfBtn.innerHTML = originalText;
+                pdfBtn.disabled = false;
+            }
+        }
         async function loadHistory() {
             try {
                 const response = await fetch(`${API_BASE}/history`);
