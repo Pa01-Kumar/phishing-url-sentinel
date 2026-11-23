@@ -8,3 +8,7 @@ services:
     envVars:
       - key: VIRUSTOTAL_API_KEY
         sync: false
+      - key: HF_TOKEN
+        sync: false
+      - key: ABUSEIPDB_API_KEY
+        sync: false

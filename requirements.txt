@@ -13,5 +13,7 @@ validators
 slowapi
 mmh3
 beautifulsoup4
-opencv-python
+opencv-python-headless
 Pillow
+fpdf2
+transformers

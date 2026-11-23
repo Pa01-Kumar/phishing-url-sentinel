@@ -88,10 +88,10 @@
                     <button onclick="downloadReport()" class="bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold py-2 px-3 rounded-lg transition-colors flex items-center gap-1">
                         ⬇️ Download JSON
                     </button>
-                    <button onclick="downloadSTIX()" class="bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold py-2 px-3 rounded-lg transition-colors flex items-center gap-1">
+                    <button onclick="downloadSTIX(event)" class="bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold py-2 px-3 rounded-lg transition-colors flex items-center gap-1">
                         ⬇️ Download STIX
                     </button>
-                    <button onclick="downloadPDF()" class="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-2 px-3 rounded-lg transition-colors flex items-center gap-1 shadow-lg">
+                    <button onclick="downloadPDF(event)" class="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-2 px-3 rounded-lg transition-colors flex items-center gap-1 shadow-lg">
                         📄 PDF Report
                     </button>
                     <span id="verdictBadge" class="px-4 py-1 rounded-full font-bold text-sm"></span>
@@ -152,9 +152,27 @@
     </div>
 
     <script>
-        // IMPORTANT: Keep this pointing to Render for production, or 127.0.0.1:8000 for local testing
-        const API_BASE = 'http://127.0.0.1:8000'; 
+        // Dynamic API Base with fallback for local dev & deployed instances
+        const API_BASE = window.API_BASE || 
+            localStorage.getItem('SENTINEL_API_BASE') ||
+            (window.location.protocol.startsWith('http') && window.location.port === '8000'
+                ? window.location.origin
+                : (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+                    ? 'http://127.0.0.1:8000'
+                    : '')); 
+
         let currentScanData = null;
+
+        // XSS Prevention sanitizer
+        function escapeHTML(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
 
         // --- TAB SWITCHING LOGIC ---
         function switchTab(tab) {
@@ -245,10 +263,11 @@
                     method: 'POST',
                     body: formData
                 });
-                if (!response.ok) throw new Error("Failed to scan QR code.");
-                const data = await response.json();
-                if (data.error) alert(data.error);
-                else displayResult(data);
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || data.error) {
+                    throw new Error(data.error || "Failed to scan QR code.");
+                }
+                displayResult(data);
             } catch (error) { alert(error.message); }
             finally {
                 document.getElementById('scanBtn').disabled = false;
@@ -289,7 +308,7 @@
         function displayResult(data) {
             currentScanData = data; 
             document.getElementById('resultContainer').classList.remove('hidden');
-            document.getElementById('resultUrl').innerText = data.url;
+            document.getElementById('resultUrl').textContent = data.url || 'Unknown';
             
             updateVerdictUI(data.verdict, data.risk_score);
 
@@ -297,16 +316,21 @@
             const screenshotContainer = document.getElementById('screenshotContainer');
             const websiteImage = document.getElementById('websiteImage');
             const imageLoading = document.getElementById('imageLoading');
-            const rawFinalUrl = data.details.redirect_chain[data.details.redirect_chain.length - 1];
             
-            if (rawFinalUrl && rawFinalUrl.startsWith('http')) {
+            const chain = (data.details && Array.isArray(data.details.redirect_chain)) ? data.details.redirect_chain : [];
+            let rawFinalUrl = chain.length > 0 ? chain[chain.length - 1] : (data.url || '');
+            if (rawFinalUrl.includes('->')) {
+                rawFinalUrl = rawFinalUrl.split('->').pop().trim();
+            }
+            
+            if (rawFinalUrl && rawFinalUrl.startsWith('http') && !rawFinalUrl.includes('⛔')) {
                 try {
                     const urlObj = new URL(rawFinalUrl);
                     const safeUrl = `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}`;
                     screenshotContainer.classList.remove('hidden');
                     websiteImage.classList.add('hidden');
                     imageLoading.style.display = 'block';
-                    websiteImage.src = `https://image.thum.io/get/width/800/crop/600/${safeUrl}?t=${Date.now()}`;
+                    websiteImage.src = `https://image.thum.io/get/width/800/crop/600/${encodeURIComponent(safeUrl)}?t=${Date.now()}`;
                 } catch (e) { screenshotContainer.classList.add('hidden'); }
             } else { screenshotContainer.classList.add('hidden'); }
 
@@ -314,11 +338,11 @@
             const redirectContainer = document.getElementById('redirectContainer');
             const redirectList = document.getElementById('redirectList');
             redirectList.innerHTML = '';
-            if (data.details.redirect_chain && data.details.redirect_chain.length > 1) {
+            if (chain && chain.length > 1) {
                 redirectContainer.classList.remove('hidden');
-                data.details.redirect_chain.forEach((link, index) => {
+                chain.forEach((link, index) => {
                     const p = document.createElement('div');
-                    p.innerText = (index > 0 ? "⬇️ " : "📍 ") + link;
+                    p.textContent = (index > 0 ? "⬇️ " : "📍 ") + link;
                     redirectList.appendChild(p);
                 });
             } else { redirectContainer.classList.add('hidden'); }
@@ -326,56 +350,59 @@
             // Details
             const detailsList = document.getElementById('detailsList');
             detailsList.innerHTML = ''; 
+            const details = data.details || {};
             
-            if (data.details.virustotal_stats) {
-                const vt = data.details.virustotal_stats;
+            if (details.virustotal_stats) {
+                const vt = details.virustotal_stats;
                 const vtLi = document.createElement('li');
                 vtLi.className = "border-b border-gray-700 pb-2 mb-2 font-bold";
-                if (vt.error) vtLi.innerHTML = `<span class="text-red-400">VirusTotal:</span> <span class="text-gray-400">${vt.error}</span>`;
-                else {
+                if (vt.error) {
+                    vtLi.innerHTML = `<span class="text-red-400">VirusTotal:</span> <span class="text-gray-400">${escapeHTML(vt.error)}</span>`;
+                } else {
                     const color = vt.malicious > 0 ? "text-red-400" : "text-green-400";
-                    vtLi.innerHTML = `<span class="text-blue-400">VirusTotal:</span> <span class="${color}">${vt.malicious} / ${vt.total_engines}</span> security vendors flagged this URL.`;
+                    vtLi.innerHTML = `<span class="text-blue-400">VirusTotal:</span> <span class="${color}">${escapeHTML(vt.malicious)} / ${escapeHTML(vt.total_engines)}</span> security vendors flagged this URL.`;
                 }
                 detailsList.appendChild(vtLi);
             }
 
-            if (data.details.urlhaus_stats && data.details.urlhaus_stats.status === 'online') {
+            if (details.urlhaus_stats && details.urlhaus_stats.status === 'online') {
                 const uLi = document.createElement('li');
                 uLi.className = "border-b border-gray-700 pb-2 mb-2 font-bold text-red-400";
-                uLi.innerHTML = `<span class="text-blue-400">URLhaus:</span> <span class="text-red-400">Known Malware (${data.details.urlhaus_stats.threat})</span>`;
+                uLi.innerHTML = `<span class="text-blue-400">URLhaus:</span> <span class="text-red-400">Known Malware (${escapeHTML(details.urlhaus_stats.threat)})</span>`;
                 detailsList.appendChild(uLi);
             }
 
-            if (data.details.network_iocs && data.details.network_iocs.abuseipdb) {
-                const iocs = data.details.network_iocs;
+            if (details.network_iocs && details.network_iocs.abuseipdb) {
+                const iocs = details.network_iocs;
                 const abuseLi = document.createElement('li');
                 abuseLi.className = "border-b border-gray-700 pb-2 mb-2 font-bold";
-                const score = iocs.abuseipdb.abuse_confidence_score;
+                const score = iocs.abuseipdb.abuse_confidence_score || 0;
                 const color = score > 50 ? "text-red-400" : (score > 0 ? "text-yellow-400" : "text-green-400");
-                abuseLi.innerHTML = `<span class="text-blue-400">AbuseIPDB:</span> <span class="${color}">${score}% Abuse Score</span> <span class="text-gray-400">(ISP: ${iocs.abuseipdb.isp})</span>`;
+                abuseLi.innerHTML = `<span class="text-blue-400">AbuseIPDB:</span> <span class="${color}">${escapeHTML(score)}% Abuse Score</span> <span class="text-gray-400">(ISP: ${escapeHTML(iocs.abuseipdb.isp)})</span>`;
                 detailsList.appendChild(abuseLi);
             }
             
-                        // --- NEW: SSL Certificate Info ---
-            if (data.details.network_iocs && data.details.network_iocs.ssl_cert) {
-                const ssl = data.details.network_iocs.ssl_cert;
+            // SSL Certificate Info
+            if (details.network_iocs && details.network_iocs.ssl_cert) {
+                const ssl = details.network_iocs.ssl_cert;
                 const sslLi = document.createElement('li');
                 sslLi.className = "border-b border-gray-700 pb-2 mb-2";
                 
                 if (ssl.is_self_signed) {
-                    sslLi.innerHTML = `<span class="text-blue-400">SSL Cert:</span> <span class="text-red-400 font-bold">Self-Signed</span> <span class="text-gray-400">(Issuer: ${ssl.issuer})</span>`;
-                } else if (ssl.days_old !== null && ssl.days_old < 7) {
-                    sslLi.innerHTML = `<span class="text-blue-400">SSL Cert:</span> <span class="text-red-400 font-bold">Very New (${ssl.days_old} days old)</span> <span class="text-gray-400">(Issuer: ${ssl.issuer})</span>`;
+                    sslLi.innerHTML = `<span class="text-blue-400">SSL Cert:</span> <span class="text-red-400 font-bold">Self-Signed</span> <span class="text-gray-400">(Issuer: ${escapeHTML(ssl.issuer)})</span>`;
+                } else if (ssl.days_old !== null && ssl.days_old !== undefined && ssl.days_old < 7) {
+                    sslLi.innerHTML = `<span class="text-blue-400">SSL Cert:</span> <span class="text-red-400 font-bold">Very New (${escapeHTML(ssl.days_old)} days old)</span> <span class="text-gray-400">(Issuer: ${escapeHTML(ssl.issuer)})</span>`;
                 } else {
-                    sslLi.innerHTML = `<span class="text-blue-400">SSL Cert:</span> <span class="text-green-400 font-bold">Valid</span> <span class="text-gray-400">(Issuer: ${ssl.issuer})</span>`;
+                    sslLi.innerHTML = `<span class="text-blue-400">SSL Cert:</span> <span class="text-green-400 font-bold">Valid</span> <span class="text-gray-400">(Issuer: ${escapeHTML(ssl.issuer)})</span>`;
                 }
                 detailsList.appendChild(sslLi);
             }
             
-            const checks = data.details.checks;
+            const checks = details.checks || {};
             for (const [key, value] of Object.entries(checks)) {
                 const li = document.createElement('li');
-                li.innerHTML = `<span class="text-blue-400">${key}:</span> <span class="text-gray-300">${JSON.stringify(value)}</span>`;
+                const valStr = typeof value === 'object' ? JSON.stringify(value) : String(value);
+                li.innerHTML = `<span class="text-blue-400">${escapeHTML(key)}:</span> <span class="text-gray-300">${escapeHTML(valStr)}</span>`;
                 detailsList.appendChild(li);
             }
             
@@ -385,7 +412,7 @@
         function displayEmailResult(data) {
             currentScanData = data; 
             document.getElementById('resultContainer').classList.remove('hidden');
-            document.getElementById('resultUrl').innerText = "Email Text Analysis";
+            document.getElementById('resultUrl').textContent = "Email Text Analysis";
             
             updateVerdictUI(data.verdict, data.risk_score);
 
@@ -395,40 +422,45 @@
             const detailsList = document.getElementById('detailsList');
             detailsList.innerHTML = ''; 
             
-            // NEW: Render the AI Deception Warning
+            // Render the AI Deception Warning safely with textContent
             if (data.ai_warning) {
                 const warningLi = document.createElement('li');
                 warningLi.className = "bg-red-900 border border-red-500 p-3 rounded-lg mb-4 text-red-200 font-sans text-sm font-bold";
-                warningLi.innerHTML = data.ai_warning;
+                warningLi.textContent = data.ai_warning;
                 detailsList.appendChild(warningLi);
             }
 
             if (data.extracted_urls && data.extracted_urls.length > 0) {
                 const uLi = document.createElement('li');
                 uLi.className = "border-b border-gray-700 pb-2 mb-2 font-bold";
-                uLi.innerHTML = `<span class="text-blue-400">Extracted URLs:</span> <span class="text-yellow-300">${data.extracted_urls.join(', ')}</span>`;
+                uLi.innerHTML = `<span class="text-blue-400">Extracted URLs:</span> <span class="text-yellow-300">${escapeHTML(data.extracted_urls.join(', '))}</span>`;
                 detailsList.appendChild(uLi);
             }
 
-            const checks = data.details.text_heuristics;
+            const details = data.details || {};
+            const checks = details.text_heuristics || {};
             for (const [key, value] of Object.entries(checks)) {
                 const li = document.createElement('li');
-                // Make the brand impersonation heuristic stand out
+                const valStr = typeof value === 'object' ? JSON.stringify(value) : String(value);
                 if (key === 'ai_brand_impersonation') {
-                    li.innerHTML = `<span class="text-red-400 font-bold">${key}:</span> <span class="text-red-300">${JSON.stringify(value)}</span>`;
+                    li.innerHTML = `<span class="text-red-400 font-bold">${escapeHTML(key)}:</span> <span class="text-red-300">${escapeHTML(valStr)}</span>`;
                 } else {
-                    li.innerHTML = `<span class="text-blue-400">${key}:</span> <span class="text-red-300">${JSON.stringify(value)}</span>`;
+                    li.innerHTML = `<span class="text-blue-400">${escapeHTML(key)}:</span> <span class="text-red-300">${escapeHTML(valStr)}</span>`;
                 }
                 detailsList.appendChild(li);
             }
+            
+            loadHistory();
         }
 
         function updateVerdictUI(verdict, score) {
-            document.getElementById('riskScoreText').innerText = (score * 100).toFixed(1) + '%';
+            const numScore = (typeof score === 'number') ? score : 0;
+            document.getElementById('riskScoreText').innerText = (numScore * 100).toFixed(1) + '%';
             const riskBar = document.getElementById('riskBar');
-            riskBar.style.width = (score * 100) + '%';
+            riskBar.style.width = (numScore * 100) + '%';
             const badge = document.getElementById('verdictBadge');
-            badge.innerText = verdict.toUpperCase();
+            const vText = verdict ? String(verdict).toUpperCase() : 'UNKNOWN';
+            badge.innerText = vText;
             
             if (verdict === 'malicious') {
                 riskBar.className = "h-4 rounded-full transition-all duration-1000 bg-red-500";
@@ -454,20 +486,26 @@
             downloadAnchorNode.remove();
         }
 
-        async function downloadSTIX() {
-            if (!currentScanData || !currentScanData.url) return;
+        async function downloadSTIX(e) {
+            if (!currentScanData) return;
+            const targetUrl = currentScanData.url || (currentScanData.extracted_urls && currentScanData.extracted_urls[0]);
+            if (!targetUrl || targetUrl.startsWith('Email')) {
+                alert("STIX export requires a URL scan result.");
+                return;
+            }
             
-            // Show a quick loading state on the button
-            const stixBtn = event.target.closest('button');
-            const originalText = stixBtn.innerHTML;
-            stixBtn.innerHTML = '⏳ Generating...';
-            stixBtn.disabled = true;
+            const stixBtn = (e && e.target) ? e.target.closest('button') : null;
+            const originalText = stixBtn ? stixBtn.innerHTML : '';
+            if (stixBtn) {
+                stixBtn.innerHTML = '⏳ Generating...';
+                stixBtn.disabled = true;
+            }
 
             try {
                 const response = await fetch(`${API_BASE}/scan/stix`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url: currentScanData.url })
+                    body: JSON.stringify({ url: targetUrl })
                 });
                 
                 if (!response.ok) throw new Error("Failed to generate STIX");
@@ -485,19 +523,22 @@
             } catch (error) {
                 alert("Error generating STIX report: " + error.message);
             } finally {
-                // Restore button state
-                stixBtn.innerHTML = originalText;
-                stixBtn.disabled = false;
+                if (stixBtn) {
+                    stixBtn.innerHTML = originalText;
+                    stixBtn.disabled = false;
+                }
             }
         }
         
-        async function downloadPDF() {
-            if (!currentScanData || !currentScanData.url) return;
+        async function downloadPDF(e) {
+            if (!currentScanData) return;
             
-            const pdfBtn = event.target.closest('button');
-            const originalText = pdfBtn.innerHTML;
-            pdfBtn.innerHTML = '⏳ Generating...';
-            pdfBtn.disabled = true;
+            const pdfBtn = (e && e.target) ? e.target.closest('button') : null;
+            const originalText = pdfBtn ? pdfBtn.innerHTML : '';
+            if (pdfBtn) {
+                pdfBtn.innerHTML = '⏳ Generating...';
+                pdfBtn.disabled = true;
+            }
 
             try {
                 const response = await fetch(`${API_BASE}/export/pdf`, {
@@ -507,8 +548,7 @@
                 });
                 
                 if (!response.ok) {
-                    // Try to read the error from the backend
-                    const errorData = await response.json();
+                    const errorData = await response.json().catch(() => ({}));
                     throw new Error(errorData.error || "Server error");
                 }
                 
@@ -524,10 +564,13 @@
             } catch (error) {
                 alert("Error generating PDF: " + error.message);
             } finally {
-                pdfBtn.innerHTML = originalText;
-                pdfBtn.disabled = false;
+                if (pdfBtn) {
+                    pdfBtn.innerHTML = originalText;
+                    pdfBtn.disabled = false;
+                }
             }
         }
+
         async function loadHistory() {
             try {
                 const response = await fetch(`${API_BASE}/history`);

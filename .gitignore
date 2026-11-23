@@ -1,7 +1,10 @@
 .vscode/
 venv/
+.venv/
 __pycache__/
 *.pyc
 .env
-*.db
+*.db*
+*.pdf
 models/
+.pytest_cache/
