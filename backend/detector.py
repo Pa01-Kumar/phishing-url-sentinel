@@ -174,7 +174,7 @@ def check_urlhaus(url: str):
     return None
 
 def trace_redirects(url: str):
-    """Tracks HTTP/JS redirects and scans for AiTM iframes."""
+    """Tracks HTTP/JS redirects and scans for AiTM/Phishing Kit signatures."""
     chain = [url]
     penalty = 0.0
     final_url = url
@@ -203,9 +203,8 @@ def trace_redirects(url: str):
                 current_url = next_url
                 penalty += 0.1
             else:
-                # Parse HTML for JS Redirects & AiTM
                 try:
-                    html_content = response.text[:5000]
+                    html_content = response.text[:15000] # Increased to 15KB to read full scripts
                     html_lower = html_content.lower()
                     
                     # 1. JS Redirect Check
@@ -222,18 +221,48 @@ def trace_redirects(url: str):
                         penalty += 0.1
                         continue
                     
-                    # 2. AiTM / BiTB Detection
+                    # --- NEW: ADVANCED AiTM & KIT DETECTION ---
+
+                    # 2. BiTB (Browser-in-the-Browser) Full-Screen Iframes
                     if '<iframe' in html_lower:
-                        if 'width:100%' in html_lower or 'height:100vh' in html_lower or 'position:fixed' in html_lower or 'width: 100%' in html_lower or 'height: 100vh' in html_lower or 'position: fixed' in html_lower:
-                            extra_heuristics['aitm_browser_in_browser'] = "Suspicious full-screen iframe detected (Possible AiTM/BiTB)"
+                        if any(x in html_lower for x in ['width:100%', 'height:100vh', 'position:fixed', 'width: 100%', 'height: 100vh', 'position: fixed']):
+                            extra_heuristics['aitm_browser_in_browser'] = "Suspicious full-screen iframe detected (Possible BiTB)"
                             penalty += 0.5
-                            
+
+                    # 3. Detect Known AiTM Kits (Evilginx, Sneaky 2FA, Modlishka, Cephas)
+                    kit_signatures = ['evilginx', 'sneaky2fa', 'modlishka', 'cephas', 'reverse-proxy-phish']
+                    for sig in kit_signatures:
+                        if sig in html_lower:
+                            extra_heuristics['known_phishing_kit'] = f"Detected signature of known AiTM kit: {sig}"
+                            penalty += 1.0 # Instant Malicious
+                            break
+
+                    # 4. Detect Heavy JavaScript Obfuscation (Used to hide payloads)
+                    if 'eval(function(p,a,c,k,e,d)' in html_lower or 'atob(' in html_lower or 'base64_decode' in html_lower:
+                        # If the page uses heavy obfuscation, it's highly suspicious
+                        extra_heuristics['heavy_js_obfuscation'] = "Page uses heavy JavaScript obfuscation (Common in AiTM kits)"
+                        penalty += 0.4
+                        
+                    # 5. Form Action Mismatch (Credential Harvesting)
+                    # If the page has a password field, but submits to a different domain
+                    if '<input type="password"' in html_lower or "<input type='password'" in html_lower:
+                        form_action = re.search(r'<form[^>]+action=[\'"]([^\'"]+)[\'"]', html_content, re.IGNORECASE)
+                        if form_action:
+                            action_url = form_action.group(1)
+                            # Check if the form submits to a completely different domain
+                            if action_url.startswith('http'):
+                                action_domain = urlparse(action_url).hostname
+                                current_domain = urlparse(current_url).hostname
+                                if action_domain and current_domain and action_domain not in current_domain:
+                                    extra_heuristics['credential_harvesting_mismatch'] = f"Password form submits to a different domain: {action_domain}"
+                                    penalty += 0.7
+
                 except Exception:
                     pass
                 break
                 
         final_url = current_url
-        penalty = min(penalty, 0.8)
+        penalty = min(penalty, 1.0) # Allow penalty to max out for AiTM
     except Exception:
         pass
         
